@@ -1,0 +1,23 @@
+-- Sharing metadata: read by tooling and the manager detail pane.
+return {
+  summary = "Hold B to walk faster. Gen 3 gave you these in five minutes; Gen 1 made you earn a bicycle.",
+  author = "MadeinTaly",
+  support = "https://linktr.ee/made_in_taly",
+  tags = { "quality-of-life", "movement", "beginner", "data-only" },
+  compat = { modApi = 2 },
+  differences = {
+    added = {
+      "holding B shortens a step, at a multiplier you choose: x1.5, x2, x3 or x4",
+      "BOOST BIKE and BOOST SURF, both off by default",
+    },
+    changed = {
+      "nothing but the duration of a step: a tile still costs a tile, and collision, triggers and the animation are untouched",
+    },
+    known = {
+      "x2 is exactly the bicycle's own 8 frames, so at that setting your shoes have caught up with a vehicle -- this is a fact about Gen 1's bicycle, not a bug in the shoes",
+      "the ladder stops at x4 because steps are whole frames: one rung further is 3 frames, then 2, then 1, at which point a tile passes in a sixtieth of a second and the walk cycle is a strobe",
+      "it calls the next handler first and multiplies the answer, so a mod that slows you down in a swamp keeps its say",
+      "no sprint animation: the legs move at walking cadence, just over less ground-time -- Gen 1 has no running frames to draw",
+    },
+  },
+}
