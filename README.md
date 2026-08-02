@@ -87,10 +87,33 @@ The engine has a `movement.speed` hook, and its own comment in
 > lets a mod multiply or replace that (**running shoes**, dash, etc.)
 
 So this mod is the shape the engine was expecting, rather than something
-prised in around the side. It reads one button, returns one number, and
-declares **no permissions at all** — it never touches engine internals,
-which for a mod that changes how fast you move is a slightly smug thing to
-be able to say.
+prised in around the side. It reads one button and returns one number.
+
+### The part where one number turned out not to be enough
+
+The hook is asked on a **manual** step, and the answer is stored on the
+player as `stepFramesCur`. A **scripted** step — the guide walking you to
+the Poké Mart, Oak marching you to his lab — never asks:
+`OverworldState:updateScriptMoves` sets the move directly. So it reused the
+last manual step's duration.
+
+Measured on a real `Player`:
+
+| | frames per tile |
+| --- | --- |
+| scripted step, no run before it | 16 |
+| scripted step after a running step | **8** |
+
+The escort NPC has no such knob — `src/world/NPC.lua` keeps its own fixed
+16 — so the player crossed two tiles for the guide's one and arrived ahead
+of the dialogue. And it happened nearly every time, because the button that
+advances the dialogue you are being escorted out of is B: the same button
+that makes you run.
+
+Since 1.1.0 the duration is handed back to the engine's own number as soon
+as you stand still, and again when a script starts. A step already under
+way keeps the speed it began with, the bicycle goes back to 8 rather than
+16, and a duration set by another mod is never overwritten.
 
 ## Requirements and legal
 
