@@ -18,6 +18,7 @@ return {
       "the ladder stops at x4 because steps are whole frames: one rung further is 3 frames, then 2, then 1, at which point a tile passes in a sixtieth of a second and the walk cycle is a strobe",
       "it calls the next handler first and multiplies the answer, so a mod that slows you down in a swamp keeps its say",
       "no sprint animation: the legs move at walking cadence, just over less ground-time -- Gen 1 has no running frames to draw",
+      "scripted walks stay at the engine's own speed: a step's duration lives on the player and a cutscene's steps do not ask the hook, so until 1.1.0 an escort NPC and the player walked at different speeds and the player arrived ahead of the dialogue",
     },
   },
 }

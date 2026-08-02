@@ -28,6 +28,7 @@ local function ctx(opts)
     surfing = opts.surfing or false,
     input = { isDown = function(_, btn) return opts.b and btn == "b" end },
     save = {},
+    player = opts.player,
   }
 end
 
@@ -116,6 +117,125 @@ local picked = ModUpdate.pickZipAsset({
 }, id, version)
 T.eq(picked and picked.name, wanted,
   "the release asset must be named " .. wanted)
+
+-- ------- a scripted walk must NOT inherit the running step
+--
+-- The bug this covers: the guide who escorts you somewhere walks at the
+-- NPC's fixed 16 frames, but the player's scripted steps reuse whatever
+-- `stepFramesCur` the last MANUAL step left on the player -- and
+-- OverworldState:updateScriptMoves sets `moving` directly, so the hook is
+-- never asked. Run into a cutscene and the player crosses two tiles for
+-- the guide's one.
+--
+-- These drive a real Player rather than a stand-in, so the assertion is
+-- against the engine's own arithmetic and would notice if it changed.
+
+-- The restore itself needs nothing but a table carrying `moving` and
+-- `stepFramesCur`, which is all the mod touches -- so these run everywhere,
+-- including CI's 3-species fixture.
+
+local function walker() return { moving = false, stepFramesCur = nil } end
+local function tick() Runtime.call("input.step", function() end, {}, 1 / 60) end
+
+do
+  local p = walker()
+  T.eq(speed(WALK, ctx{ b = true, player = p }), BIKE,
+    "the running step itself is still sped up")
+  p.stepFramesCur = BIKE          -- what Player:tryMove stores
+  tick()
+  T.eq(p.stepFramesCur, WALK, "standing still puts the engine's own duration back")
+end
+
+-- the cutscene's own signal: script.started closes the one-frame race where
+-- a script queues a move on the tick the running step ended
+do
+  local p = walker()
+  speed(WALK, ctx{ b = true, player = p })
+  p.stepFramesCur = BIKE
+  Runtime.emit("script.started", { ctx = {} })
+  T.eq(p.stepFramesCur, WALK, "a starting script restores it immediately")
+end
+
+-- a step still IN PROGRESS must keep its speed: restoring mid-stride would
+-- change the duration under a move already part-way across a tile
+do
+  local p = walker()
+  speed(WALK, ctx{ b = true, player = p })
+  p.stepFramesCur, p.moving = BIKE, true
+  tick()
+  T.eq(p.stepFramesCur, BIKE, "a step already under way keeps the speed it started with")
+end
+
+-- and we only ever undo OUR number: if anything else has set the duration
+-- since, that decision belongs to whoever made it
+do
+  local p = walker()
+  speed(WALK, ctx{ b = true, player = p })
+  p.stepFramesCur = 3       -- somebody else's idea, not ours
+  tick()
+  T.eq(p.stepFramesCur, 3, "another mod's duration is left alone")
+end
+
+-- the bicycle restores to the BICYCLE's number, not to walking: vanilla
+-- would have left 8 there, and that is what the scripted step should use
+do
+  local p = walker()
+  local sped = speed(BIKE, ctx{ b = true, onBike = true, player = p })
+  if sped < BIKE then       -- only meaningful while BOOST BIKE is on
+    p.stepFramesCur = sped
+    tick()
+    T.eq(p.stepFramesCur, BIKE, "on the bicycle it goes back to 8, not 16")
+  else
+    T.check(true, "BOOST BIKE is off by default, so there is nothing to restore")
+  end
+end
+
+-- ------- and the same thing against the engine's real arithmetic
+--
+-- The assertions above take it on trust that `stepFramesCur` is what a
+-- scripted step is timed by. These prove it, by counting a real Player
+-- across a real tile -- so if the engine ever changes how a step is timed,
+-- this notices instead of quietly passing.
+--
+-- Gated: building a Player needs the player sprites, which the 3-species
+-- fixture CI runs on does not carry. The gate reports which way it went
+-- rather than skipping silently.
+
+if not _G.love then _G.love = require("tests.love_stub") end
+local Player = require("src.world.Player")
+local Collision = require("src.world.Collision")
+
+local probe = select(2, pcall(function() return Player.new(Data, 5, 5, "down") end))
+local REAL = type(probe) == "table" and probe.update ~= nil
+T.check(true, REAL and "full dataset: the real-Player checks ARE running"
+                    or "fixture dataset: no player sprites, real-Player checks skipped")
+
+if REAL then
+  -- exactly what updateScriptMoves does: no tryMove, so no hook
+  local function scriptStep(p, dir)
+    p.facing = dir
+    p.targetX, p.targetY = Collision.target(p.cellX, p.cellY, dir)
+    p.moving, p.progress = true, 0
+  end
+  local function ticksToCross(p)
+    local n = 0
+    while p.moving and n < 200 do p:update(); n = n + 1 end
+    return n
+  end
+
+  local p = Player.new(Data, 5, 5, "down")
+  scriptStep(p, "down")
+  T.eq(ticksToCross(p), WALK, "a scripted step is 16 frames with nothing in the way")
+
+  -- the bug, end to end: run, stand still, then let a script move you
+  speed(WALK, ctx{ b = true, player = p })
+  p.stepFramesCur = BIKE
+  p.moving = false
+  tick()
+  scriptStep(p, "down")
+  T.eq(ticksToCross(p), WALK,
+    "so the escort's scripted step runs at the NPC's speed, not the player's")
+end
 
 run.release()
 T.finish("running_shoes")
