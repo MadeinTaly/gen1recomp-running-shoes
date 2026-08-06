@@ -115,25 +115,30 @@ as you stand still, and again when a script starts. A step already under
 way keeps the speed it began with, the bicycle goes back to 8 rather than
 16, and a duration set by another mod is never overwritten.
 
-## Help wanted
+## Tell me what else B should do
 
-Small mod, few places to go wrong, but a couple of real questions:
+Holding B to run is one idea. It is not obviously the only good one, and
+this mod is small enough that almost anything fits.
 
-- **are the speeds right?** ×1.5 / ×2 / ×3 / ×4 is a guess. If ×2 feels
-  wrong on your device, that is worth an issue;
-- **does anything else desync?** The escort-NPC bug — where the player
-  arrived before the cutscene did — was found by a player, not by a test.
-  There may be more scenes like it;
-- **other things B could do.** Running is one idea; it is not obviously the
-  only one.
+Open an issue if you want:
 
-The one hard rule is that anything you send has to be **yours**. No sprites,
-palettes, audio or text lifted from a ROM, a fan game, a wiki or another
-mod — not out of fussiness, but because this whole project stands on not
-redistributing other people's game data, and the other modders on the index
-deserve the same courtesy we would want.
+- **auto-run**, so you never hold anything;
+- **speed that depends on where you are** — slower indoors, faster on a
+  route you have cleared;
+- **the bike and surf reworked** rather than just boosted;
+- **a different button entirely** doing something useful — a quick-heal, a
+  repel toggle, a dash with a cooldown;
+- **something I have not thought of.** Movement is the thing you do most in
+  this game and it has had the least attention.
 
-You do not need to know Lua for any of the above.
+**Ideas are the contribution.** You do not have to build it, mock it up or
+know Lua — describe what you want and why, and it gets considered. The best
+ones ship.
+
+If an idea comes with art, the art has to be **yours**: nothing traced,
+edited or recoloured from a ROM, a fan game, a wiki or another mod. That is
+what keeps this shippable, and it is what the other authors on the index are
+owed.
 
 ## Requirements and legal
 
