@@ -115,6 +115,26 @@ as you stand still, and again when a script starts. A step already under
 way keeps the speed it began with, the bicycle goes back to 8 rather than
 16, and a duration set by another mod is never overwritten.
 
+## Help wanted
+
+Small mod, few places to go wrong, but a couple of real questions:
+
+- **are the speeds right?** ×1.5 / ×2 / ×3 / ×4 is a guess. If ×2 feels
+  wrong on your device, that is worth an issue;
+- **does anything else desync?** The escort-NPC bug — where the player
+  arrived before the cutscene did — was found by a player, not by a test.
+  There may be more scenes like it;
+- **other things B could do.** Running is one idea; it is not obviously the
+  only one.
+
+The one hard rule is that anything you send has to be **yours**. No sprites,
+palettes, audio or text lifted from a ROM, a fan game, a wiki or another
+mod — not out of fussiness, but because this whole project stands on not
+redistributing other people's game data, and the other modders on the index
+deserve the same courtesy we would want.
+
+You do not need to know Lua for any of the above.
+
 ## Requirements and legal
 
 Lua source only: no ROM, no ROM-derived data, no game assets. You need
