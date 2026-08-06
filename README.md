@@ -115,30 +115,17 @@ as you stand still, and again when a script starts. A step already under
 way keeps the speed it began with, the bicycle goes back to 8 rather than
 16, and a duration set by another mod is never overwritten.
 
-## Tell me what else B should do
+## Ideas, and help building them
 
-Holding B to run is one idea. It is not obviously the only good one, and
-this mod is small enough that almost anything fits.
+**Got an idea for something this should do?** Open an issue — there is a
+template for it. You do not need to know any Lua, and you do not need to
+have worked out how it would be built. Describe what you want and why.
 
-Open an issue if you want:
+**Want to build it yourself?** Open a pull request. Collaboration is welcome
+on any part of this.
 
-- **auto-run**, so you never hold anything;
-- **speed that depends on where you are** — slower indoors, faster on a
-  route you have cleared;
-- **the bike and surf reworked** rather than just boosted;
-- **a different button entirely** doing something useful — a quick-heal, a
-  repel toggle, a dash with a cooldown;
-- **something I have not thought of.** Movement is the thing you do most in
-  this game and it has had the least attention.
-
-**Ideas are the contribution.** You do not have to build it, mock it up or
-know Lua — describe what you want and why, and it gets considered. The best
-ones ship.
-
-If an idea comes with art, the art has to be **yours**: nothing traced,
-edited or recoloured from a ROM, a fan game, a wiki or another mod. That is
-what keeps this shippable, and it is what the other authors on the index are
-owed.
+Anything you send that includes art has to be your own work — nothing
+traced, edited or recoloured from a ROM, a fan game, a wiki or another mod.
 
 ## Requirements and legal
 
