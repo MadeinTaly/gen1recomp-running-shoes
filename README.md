@@ -34,43 +34,53 @@ Hold **B** while walking. That is the whole interface.
 
 ## The three extras
 
-**`RUN FX`** draws a trail off your heels while you hold B. Dust is the
-default, because dust is the one a pair of shoes could actually account
-for; flames and lightning are there because you asked, and they are honest
-about being decoration. It is drawn over the finished frame and changes
-nothing underneath it — no tile, no flag, and not one draw of the random
-number generator that decides encounters and battles. It has its own tiny
-generator for exactly that reason: a spark that moved the game's dice would
-be a spark you could see in a battle log.
+**`RUN FX`** leaves a trail off your heels while you hold B, in two layers.
 
-Two places it stands down rather than draw in the wrong spot: **tilt mode**,
-and a mod's **render pipeline** that replaces the world pass. Both move the
-camera in ways a screen-space overlay cannot follow, so it waits them out.
+The anchor is the **engine's own dust puff** — `startDustAnim`, the same
+animation Cut leaves on grass — dropped on the cell you have just left.
+That is drawn in the world pass, at the right place under every camera the
+engine has, so it cannot be in the wrong spot and cannot fail to appear.
+
+On top of it, coloured particles give dust, flames and bolts their
+different looks. Those are drawn over the finished frame through
+`render.hud`. They change nothing underneath — no tile, no flag, and not
+one draw of the random number generator that decides encounters and
+battles. The trail has its own tiny generator for exactly that reason: a
+spark that moved the game's dice would be a spark you could see in a battle
+log.
+
+Two places the coloured layer stands down rather than draw in the wrong
+spot: **tilt mode**, and a mod's **render pipeline** that replaces the
+world pass. Both move the camera in ways a screen-space overlay cannot
+follow. The puff underneath is unaffected.
 
 **If you see nothing, the log will say why.** Every reason the overlay
 stands down is written to the log once, and ten seconds of play without the
 `render.hud` hook ever being reached logs the one cause the mod cannot work
-around: an engine build from before that hook existed, on which the trail
-is silently impossible. The speed rows keep working on such a build.
+around: an engine build from before that hook existed. On such a build the
+puff and the cut still work — they are the engine's own drawing.
 
-**`BURN GRASS`** cuts open the tall grass you *run* across — walking never
-burns anything — and cut grass holds no Pokémon. Walk back over it a week
-later and it is still empty, because the burnt cells are written into
-`mod.save` and travel with your save file.
+**`BURN GRASS`** *cuts* the tall grass you run across, exactly the way the
+CUT move cuts it — walking never cuts anything.
 
-The mark is one tile: a solid 16×16 patch of bare earth with a band of cut
-stubble along its top edge, exactly the size of the clod you ran over. The
-cells your sprite is currently standing on are skipped, and that is a
-drawing fact rather than a rule about grass — this is painted over the
-finished frame, so a patch there would be painted across you. A step in
-flight straddles two cells, so both are skipped, and the cut appears the
-instant your heel clears the tile.
+This is not a mark drawn on top of the grass. The engine cuts tall grass by
+**swapping a block**: `field.cutTreeSwaps` is a before/after table of block
+ids out of the ROM, and `OverworldState:tryCut` writes the "after" id into
+the map and rebuilds the renderer. The mod does the same thing, so the
+grass is genuinely gone — gone from the picture, and gone from
+`Map:isGrassCell`, which is the exact predicate the wild-encounter check
+gates on. There is no suppression and no overlay: the tile simply is not
+tall grass any more.
 
-Switching the row back **off** puts the map back exactly as the engine
-draws it and gives the grass its Pokémon back — a row you turned off is a
-row that does nothing, and nobody should be stuck with a scarred save and
-no way out of it. What burnt is remembered rather than erased, so turning
-it on again returns the map you actually left.
+One improvement on the engine's own Cut. A block is 2×2 cells, so swapping
+it whole would take four tiles for one footstep. Instead this assembles a
+block that is the current block everywhere **except** the one cell's 2×2
+tile quadrant, which comes from the cut one — **a cut exactly one clod
+wide, the size of your character**, built only from tile ids the tileset
+already contains. No art is invented and nothing ROM-derived is shipped.
+
+What you cut is written into `mod.save` and travels with your save file, so
+entering the map again re-applies it.
 
 **`SAFE GRASS`** is the smaller version of the same idea with nothing
 permanent about it: while you are running, tall grass never starts a wild

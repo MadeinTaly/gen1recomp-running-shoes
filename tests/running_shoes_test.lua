@@ -312,34 +312,165 @@ T.eq(rolls, before + 1, "a suppressed step still draws the vanilla roll")
 
 setOpt("safe", false)
 
--- BURN GRASS: the cell you ran across is recorded, and stays recorded
-setOpt("burn", true)
-runOnto(8, 9)
-T.eq(roll(), nil, "BURN GRASS: the grass you just set alight holds nothing")
-local burnt = loader.modSave.running_shoes
-              and loader.modSave.running_shoes.burnt
-T.check(burnt and burnt.ROUTE_1 and burnt.ROUTE_1["8,9"] == true,
-  "the burnt cell is written into mod.save, so it survives a reload")
+-- ------- BURN GRASS: the cut, against a REAL Map
+--
+-- The previous version of this section asserted that the mod had written a
+-- key into its own save table, which is a test of bookkeeping and not of
+-- anything the player can see.  The grass was never cut, and the test was
+-- green the whole time.
+--
+-- So these drive src/world/Map itself.  The map, the tileset and the block
+-- table are built here, but every question asked of them -- blockAt,
+-- tileAt, cellTile, isGrassCell, setBlock -- is the engine's own code, and
+-- isGrassCell is the exact predicate OverworldState:onStepComplete gates
+-- the wild-encounter roll on.  If the tile is not grass to Map, there is no
+-- encounter to suppress and nothing left to take on trust.
 
--- walking back over it later is just as empty: the grass is gone, and it
--- was not the running that emptied it
-walkOnto(8, 9)
-T.eq(roll(), nil, "a burnt cell stays empty when you walk back over it")
+local Map = require("src.world.Map")
+local OverworldState = require("src.world.OverworldController")
 
--- a cell nobody ran across is untouched
-walkOnto(9, 9)
-T.check(roll() ~= nil, "walking onto unburnt grass is unchanged")
-T.check(not (burnt.ROUTE_1["9,9"]), "and walking does not burn anything")
+local GRASS, GROUND = 0x52, 0x00
 
--- a row switched off is a row that does nothing: the burn is remembered,
--- but the grass is grass again until BURN GRASS comes back on
+local function blockOf(tile)
+  local out = {}
+  for i = 1, 16 do out[i] = tile end
+  return out
+end
+
+-- block 0 is grass in all four of its cells, which is what makes the
+-- one-clod claim testable: cut one cell and three must still be grass
+local TILESET = {
+  id = "OVERWORLD",
+  blocks = { blockOf(GRASS), blockOf(GROUND) },
+  walkable = { GRASS, GROUND },
+  grassTile = GRASS,
+  doorTiles = {}, warpTiles = {},
+}
+
+local rebuilds = 0
+
+local function freshMap()
+  local def = { id = "ROUTE_1", width = 3, height = 3, tileset = "OVERWORLD",
+                borderBlock = 0, blocks = {}, warps = {}, signs = {} }
+  for i = 1, def.width * def.height do def.blocks[i] = 0 end
+  local map = Map.new(def, TILESET)
+  map.renderer = { rebuild = function() rebuilds = rebuilds + 1 end }
+  return map
+end
+
+-- a stand-in overworld that borrows the engine's OWN replaceBlock and
+-- startDustAnim rather than reimplementing them, so what is under test is
+-- the mod plus the engine, not the mod plus a second opinion
+local function overworldOn(map)
+  return { isOverworld = true, map = map,
+           player = { cellX = 0, cellY = 0, facing = "down" },
+           replaceBlock = OverworldState.replaceBlock,
+           startDustAnim = OverworldState.startDustAnim }
+end
+
+local MAP = freshMap()
+local OW = overworldOn(MAP)
+STUB.stack.states = { OW }
+STUB.overworld = OW
+-- the swap table the engine's own tryCut reads: before -> the fully cut
+-- block.  The mod takes ONE cell's quadrant out of it rather than the
+-- whole block, which is the difference between a cut and a clearing.
+STUB.data = { field = { cutTreeSwaps = { { before = 0, after = 1 } } } }
+
+-- `live` reaches the mod through the tick hook, the way it does in play
+local function tick(game) Runtime.call("input.step", function() end, game or STUB, 1 / 60) end
+local runner = { px = 0, py = 0, facing = "down", moving = false }
+
+local function stepOnto(cx, cy, holdingB)
+  runner.px, runner.py = cx * 16, cy * 16
+  speed(WALK, ctx{ b = holdingB, player = runner })
+  tick()
+  Runtime.emit("world.stepped", { mapId = "ROUTE_1", x = cx, y = cy,
+                                  tile = MAP:cellTile(cx, cy) })
+end
+
+T.check(MAP:isGrassCell(2, 3), "the fixture map starts as tall grass")
+
+-- with the row off nothing is touched, however hard you run
 setOpt("burn", false)
-walkOnto(8, 9)
-T.check(roll() ~= nil, "with BURN GRASS off the burnt cell meets Pokemon again")
-T.check(burnt.ROUTE_1["8,9"] == true, "and the burn itself is remembered, not erased")
+stepOnto(2, 3, true)
+T.check(MAP:isGrassCell(2, 3), "BURN GRASS off: running over grass leaves it standing")
+
 setOpt("burn", true)
-T.eq(roll(), nil, "switching it back on returns the map you left")
+
+-- walking is not running, and only running cuts
+stepOnto(2, 3, false)
+T.check(MAP:isGrassCell(2, 3), "walking over grass leaves it standing")
+
+-- the cut itself
+local before = rebuilds
+stepOnto(2, 3, true)
+T.check(not MAP:isGrassCell(2, 3), "running over grass CUTS it: the cell is no longer grass")
+T.eq(MAP:cellTile(2, 3), GROUND, "and the tile under it is the tileset's own cut tile")
+T.eq(rebuilds, before + 1, "the map renderer was rebuilt exactly once for the cut")
+
+-- one clod, not four.  cell (2,3) lives in block (1,1) together with
+-- (3,3), (2,2) and (3,2); those three are the whole point of the quadrant
+-- arithmetic and must be untouched.
+T.check(MAP:isGrassCell(3, 3), "the cell beside it is still grass")
+T.check(MAP:isGrassCell(2, 2), "the cell above it is still grass")
+T.check(MAP:isGrassCell(3, 2), "the cell diagonal to it is still grass")
+
+-- a SECOND cut in the same block has to read the block back as it now
+-- stands, or it would start again from the uncut original and undo the
+-- first cut
+stepOnto(3, 3, true)
+T.check(not MAP:isGrassCell(3, 3), "a second cut in the same block also cuts")
+T.check(not MAP:isGrassCell(2, 3), "and the first cut is still cut")
+T.check(MAP:isGrassCell(2, 2), "while the two cells nobody ran over stay grass")
+
+-- the engine reads isGrassCell to decide whether to roll at all, so a cut
+-- cell is not "suppressed" -- there is nothing there to suppress
+T.check(not MAP:isGrassCell(2, 3),
+  "a cut cell answers no to the predicate the encounter check gates on")
+
+-- what was cut is recorded, and entering the map again re-applies it: a
+-- fresh boot rebuilds the map from its record, with every block uncut
+local saved = loader.modSave.running_shoes and loader.modSave.running_shoes.burnt
+T.check(saved and saved.ROUTE_1 and saved.ROUTE_1["2,3"] == true,
+  "the cut cell is recorded in mod.save so it survives a reload")
+
+MAP = freshMap()
+OW = overworldOn(MAP)
+STUB.stack.states = { OW }
+STUB.overworld = OW
+T.check(MAP:isGrassCell(2, 3), "a freshly loaded map starts uncut again")
+tick()
+Runtime.emit("map.entered", { mapId = "ROUTE_1" })
+T.check(not MAP:isGrassCell(2, 3), "entering the map re-applies the cut")
+T.check(not MAP:isGrassCell(3, 3), "both cut cells come back")
+T.check(MAP:isGrassCell(2, 2), "and the cells that were never cut are still grass")
+
+-- the puff behind a running player is the engine's own dust animation,
+-- placed on the cell just vacated rather than the one being landed on.
+-- BURN GRASS goes off first: a cut leaves its own puff on the cell it
+-- cut, and that is the animation this would otherwise be reading back.
 setOpt("burn", false)
+setOpt("fx", "dust")
+OW.dustAnim = nil
+runner.facing = "down"
+stepOnto(2, 4, true)
+T.check(OW.dustAnim ~= nil, "a running step leaves the engine's dust puff")
+T.eq(OW.dustAnim.y, 3, "on the cell just vacated, not the one landed on")
+
+-- and never over one already in flight: that animation owns a callback,
+-- and dropping it would strand whatever queued it
+OW.dustAnim = { x = 0, y = 0, frames = 30, onDone = function() end }
+local held = OW.dustAnim
+stepOnto(2, 5, true)
+T.eq(OW.dustAnim, held, "an animation already running is never stamped on")
+OW.dustAnim = nil
+
+setOpt("burn", false)
+setOpt("fx", "off")
+STUB.stack.states = { WORLD }
+STUB.overworld = nil
+STUB.data = Data
 
 -- ------- 1.2.0: the trail
 --
@@ -406,6 +537,52 @@ for _, kind in ipairs({ "dust", "fire", "bolt" }) do
   T.check(hud() > 0, "RUN FX " .. kind .. " draws")
 end
 
+-- ------- and through the engine's OWN draw path
+--
+-- Everything above calls the render.hud chain directly, which proves the
+-- wrapper works and proves nothing about whether the engine ever reaches
+-- it.  This drives src/core/Game.draw itself -- the real function, with
+-- only the renderer's frame ends stubbed, exactly the way the engine's own
+-- tests/engine/tool_mod_hooks.lua exercises this hook -- and asserts that
+-- a trail put on screen from inside it actually reaches love.graphics.
+--
+-- This is the check that would have caught an overlay wired to a hook the
+-- engine never calls.
+do
+  local Renderer = require("src.render.Renderer")
+  local TouchControls = require("src.core.TouchControls")
+  local savedUI, savedBegin, savedEnd, savedTouch =
+    Renderer.setUISize, Renderer.beginFrame, Renderer.endFrame, TouchControls.draw
+  Renderer.setUISize = function() end
+  Renderer.beginFrame = function() end
+  Renderer.endFrame = function()
+    -- the engine's own fixture shape: no dpi fields, which is itself worth
+    -- surviving, since the overlay divides by them
+    return { width = 640, height = 576, gameX = 0, gameY = 0,
+             gameWidth = 640, gameHeight = 576, scale = 4 }
+  end
+  TouchControls.draw = function() end
+
+  local world = { isOverworld = true, draw = function() end }
+  local fake = { overworld = {}, save = STUB.save, input = STUB.input,
+                 stack = { states = { world } } }
+  function fake.stack:visibleBase() return 1 end
+  function fake.stack:top() return self.states[#self.states] end
+
+  setOpt("fx", "fire")
+  runner.moving = true
+  speed(WALK, ctx{ b = true, player = runner })
+  for _ = 1, 10 do Runtime.call("input.step", function() end, fake, 1 / 60) end
+
+  drawn = 0
+  require("src.core.Game").draw(fake)
+  T.check(drawn > 0,
+    "the trail reaches love.graphics through the engine's own Game:draw")
+
+  Renderer.setUISize, Renderer.beginFrame, Renderer.endFrame, TouchControls.draw =
+    savedUI, savedBegin, savedEnd, savedTouch
+end
+
 -- tilt projects the world through a perspective mesh, which a screen-space
 -- overlay cannot follow; it stands down rather than drawing the trail
 -- somewhere the player is not
@@ -441,43 +618,16 @@ runTicks(12)
 Runtime.emit("map.exited", { mapId = "ROUTE_1" })
 T.eq(hud(), 0, "leaving the map clears the trail")
 
--- ------- the scorch marks
---
--- Drawn by the same overlay, from the cells mod.save recorded, and only
--- while BURN GRASS is on: switching the row off puts the map back the way
--- the engine draws it without touching what was burnt.
-
+-- The overlay no longer draws the cut at all, and that is worth asserting
+-- rather than merely deleting: with the trail off and BURN GRASS on, over
+-- a map with cut cells on it, nothing reaches the screen from this mod.
+-- The cut is a block swap the engine draws, so it cannot depend on the one
+-- surface that might not exist on an older build.
 setOpt("fx", "off")
-
--- The skip is measured off the SPRITE, not off the logical cell, because
--- what it is avoiding is painting over the player -- so these move the
--- anchor's pixels as well as the cell mod.world reports.
-local function stand(cx, cy)
-  WORLD.player.cellX, WORLD.player.cellY = cx, cy
-  runner.px, runner.py = cx * 16, cy * 16
-  runner.moving = false
-  speed(WALK, ctx{ b = false, player = runner })
-end
-
-stand(9, 9)                                     -- next to the burnt 8,9
-T.eq(hud(), 0, "with BURN GRASS off a burnt cell draws nothing")
 setOpt("burn", true)
-T.check(hud() > 0, "a burnt cell within view is cut open over the frame")
-
--- the cell underfoot is skipped: this draws OVER the finished frame, so a
--- patch on the player's own tile would paint across the player himself
-stand(8, 9)
-T.eq(hud(), 0, "standing on the cut cell, nothing is drawn over you")
-
--- a step in flight straddles two cells, and the sprite stands 4px proud of
--- its own, so the skip is a span: neither cell the sprite touches is cut
--- open under it
-runner.px, runner.py = 8 * 16, 9 * 16 - 8       -- half a step north of 8,9
-T.eq(hud(), 0, "mid-step, the cell the sprite is still half on is skipped too")
-
--- and a burn half a region away is never walked over by the draw loop
-stand(90, 90)
-T.eq(hud(), 0, "a burnt cell far off screen costs no draws")
+runner.px, runner.py, runner.moving = 2 * 16, 3 * 16, false
+speed(WALK, ctx{ b = false, player = runner })
+T.eq(hud(), 0, "with the trail off, a map full of cuts draws nothing over the frame")
 setOpt("burn", false)
 
 love.graphics.rectangle = realRect

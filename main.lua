@@ -54,39 +54,61 @@
 -- NPCs use. So this is ours to clean up: put back what the engine would
 -- have left, the moment the player is standing still.
 
--- ------- 1.2.0: what a run leaves behind
+-- ------- what a run leaves behind
 --
 -- Three opt-in extras, and they are deliberately three separate rows
 -- because they are three separate promises:
 --
---   RUN FX      cosmetic. Draws a trail behind the player and touches
---               nothing else -- not a tile, not a flag, not the RNG.
---   BURN GRASS  the tile you ran across is scorched, and scorched grass
---               holds no Pokemon.
+--   RUN FX      a trail behind the player.
+--   BURN GRASS  the clod you ran across is CUT, the way CUT cuts it.
 --   SAFE GRASS  running through tall grass never starts a battle.
 --
--- The trail is screen-space, drawn over the finished frame through
--- `render.hud`, and it can get away with that because of one fact about
--- this engine's camera: `Camera:follow` (src/render/Camera.lua) centres on
--- the player with no lerp and no edge clamp, so the player is not
--- somewhere on screen -- he is ALWAYS at the same place. The world canvas
--- is blitted centred in the window, and his cell's top-left corner sits 16
--- world pixels left of that centre and 8 above it. That is the entire
--- projection, and every particle is then placed relative to `player.px`:
+-- ------- the cut, and the version of it that was wrong
+--
+-- The first attempt drew a dark patch over the tile through `render.hud`
+-- and called the grass burnt. It was not burnt. It was a shadow lying on
+-- grass that was still standing, the grass still had Pokemon in it, and
+-- the whole thing hung off one screen-space overlay that had to be right
+-- about the camera, the zoom, the dpi and the compositor to show up at
+-- all. Every one of those is a way for the feature to be silently absent.
+--
+-- The engine already knew how to do this. OverworldState:tryCut cuts tall
+-- grass by SWAPPING A BLOCK: `field.cutTreeSwaps` is a before/after table
+-- of block ids out of the ROM, and cutting writes the "after" id into the
+-- map and rebuilds the renderer. So the grass is genuinely gone -- gone
+-- from the picture, and gone from `Map:isGrassCell`, which is the exact
+-- predicate the wild-encounter check gates on. Nothing is drawn by us,
+-- nothing is suppressed, and it cannot fail to be visible, because it is
+-- the map.
+--
+-- One thing has to be better than the engine's own Cut: a block is 2x2
+-- cells, so swapping it whole would take four tiles for one footstep. This
+-- assembles a block that is the CURRENT block everywhere except the one
+-- cell's 2x2 tile quadrant, which comes from the cut one -- a cut exactly
+-- one clod wide, built only from tile ids the tileset already has.
+--
+-- ------- the trail
+--
+-- Two layers, and only the second one can fail. The anchor is the ENGINE's
+-- own dust puff (`startDustAnim`, the same animation Cut leaves on grass),
+-- dropped on the cell just vacated: drawn in the world pass, at the right
+-- place under every camera the engine has. On top of it, coloured
+-- particles through `render.hud` give dust, flames and bolts their
+-- different looks. If that surface is unavailable -- an engine build older
+-- than the hook -- the puff is still there and the mod says so in the log.
+--
+-- The overlay's projection rests on one fact about this engine's camera:
+-- `Camera:follow` centres on the player with no lerp and no edge clamp, so
+-- the player is not somewhere on screen -- he is ALWAYS at the same place.
+-- The world canvas is blitted centred in the window and his cell's
+-- top-left corner sits 16 world pixels left of that centre and 8 above it:
 --
 --     screenX = width/2  - 16*sx + (worldX - player.px) * sx
 --     screenY = height/2 -  8*sy + (worldY - player.py) * sy
 --
--- No camera, no map, no engine internals beyond the player object the
--- `movement.speed` hook is already handed.
+-- ------- SAFE GRASS, and why the dice are still thrown
 --
--- ------- the encounters, and why the dice are still thrown
---
--- `encounter.roll` is asked on every step onto tall grass, even on a map
--- with no encounter table (OverworldState:rollEncounter), and returning
--- nil suppresses the battle. That makes it the one place to both notice
--- "the player just ran into grass" and act on it.
---
+-- The one extra that really is a rule rather than a change to the world.
 -- Suppressing by returning nil WITHOUT calling next() would leave the
 -- vanilla roll undrawn and shift every later draw off the stream this
 -- engine works hard to keep in parity. So a suppressed step calls next()
@@ -126,6 +148,11 @@ local LIFE = { dust = 26, fire = 22, bolt = 10 }
 -- one particle every N logic ticks while running; bolts are rarer because
 -- lightning that arrives continuously is a light bulb
 local CADENCE = { dust = 1, fire = 1, bolt = 2 }
+
+-- How long the engine's own dust puff is held behind a running player.
+-- `startDustAnim` hands out 32 frames, which is right for a boulder being
+-- shoved and far too long for a footfall at four frames a tile.
+local PUFF_FRAMES = 10
 
 -- a bolt is not a blob: four pixels stacked in a zigzag, drawn upward from
 -- the spawn point
@@ -209,6 +236,11 @@ return function(mod)
   -- input, so this is how it knows the player arrived running.
   local running = false
 
+  -- The live Game, kept from the hook that is handed it every logic tick.
+  -- `world.stepped` carries a payload and no game, and the cut needs the
+  -- dataset and the running map; this is how it gets there.
+  local live
+
   local function restore()
     local player = tracked
     tracked = nil
@@ -246,14 +278,110 @@ return function(mod)
     return cells
   end
 
-  local function isBurnt(mapId, x, y)
-    local cells = burntCells(mapId, false)
-    return cells ~= nil and cells[x .. "," .. y] == true
-  end
-
-  local function burn(mapId, x, y)
+  local function remember(mapId, x, y)
     local cells = burntCells(mapId, true)
     if cells then cells[x .. "," .. y] = true end
+  end
+
+  -- ------- cutting the grass for real
+  --
+  -- The first attempt at this drew a dark patch over the tile and called it
+  -- burnt. It was not burnt; it was a shadow lying on grass that was still
+  -- there, and the grass still had Pokemon in it because nothing about the
+  -- map had changed.
+  --
+  -- What the engine itself does for CUT is the answer, and it is in
+  -- OverworldState:tryCut. Cutting grass is a BLOCK SWAP: `field.cutTreeSwaps`
+  -- is a table of before/after block ids extracted from the ROM, and cutting
+  -- writes the "after" id into the map and rebuilds the renderer. The grass
+  -- is then genuinely gone -- gone from the picture, and gone from
+  -- `Map:isGrassCell`, which is what the encounter check reads. No overlay,
+  -- no hook, no suppression: the tile simply is not tall grass any more.
+  --
+  -- One thing has to be better than the engine's own Cut, though, because
+  -- of what was asked for: a block is 2x2 cells, so swapping it whole would
+  -- cut four tiles for one footstep. So rather than write `after` directly,
+  -- this builds a block that is `before` everywhere EXCEPT the 2x2 tile
+  -- quadrant belonging to the one cell being cut, which it takes from
+  -- `after`. That is a cut exactly one cell wide -- the size of the clod
+  -- the player ran over -- assembled entirely from tile ids the tileset
+  -- already contains. Nothing is drawn and no art is invented.
+
+  local GRASS_TILE = 0x52     -- $52, the OVERWORLD tall-grass tile (tryCut)
+  local GRASS_TILESET = "OVERWORLD"
+
+  -- synthesized block id -> the fully-cut block it was derived from, so a
+  -- SECOND cut in the same block still knows where to take its tiles from
+  local derivedFrom = {}
+  local synthesized = {}
+
+  local function swapFor(data, block)
+    local swaps = data and data.field and data.field.cutTreeSwaps
+    for _, sw in ipairs(swaps or {}) do
+      if sw.before == block then return sw.after end
+    end
+    return derivedFrom[block]
+  end
+
+  -- `before` with one cell's four tiles taken from `after`, appended to the
+  -- tileset's own block list and cached. Tilesets are shared tables --
+  -- Map.new binds tilesetDef by reference -- so an appended block is
+  -- visible to every map drawn from that tileset, and Map:tileAt reads the
+  -- list live.
+  local function cutBlock(tileset, before, after, qx, qy)
+    local key = before .. ":" .. after .. ":" .. qx .. "," .. qy
+    local cached = synthesized[key]
+    if cached then return cached end
+    local src, dst = tileset.blocks[before + 1], tileset.blocks[after + 1]
+    if type(src) ~= "table" or type(dst) ~= "table" then return nil end
+    local out = {}
+    for i = 1, 16 do out[i] = src[i] end
+    for j = 0, 1 do
+      for i = 0, 1 do
+        local idx = (qy + j) * 4 + (qx + i) + 1
+        out[idx] = dst[idx]
+      end
+    end
+    tileset.blocks[#tileset.blocks + 1] = out
+    local id = #tileset.blocks - 1
+    synthesized[key] = id
+    derivedFrom[id] = after
+    return id
+  end
+
+  -- Reads the LIVE map rather than the map record: a block already cut once
+  -- has to be read back as it now stands, or the second cut in the same
+  -- block would start again from the uncut original and undo the first.
+  -- The write goes through mod.world:replaceBlock, which is the supported
+  -- way to change the running map and rebuilds the renderer for us.
+  local function cutGrassAt(game, cx, cy, quiet)
+    local ow = game and game.overworld
+    local map = ow and ow.map
+    if not (map and map.def and map.tileset) then return false end
+    if map.def.tileset ~= GRASS_TILESET then return false end
+    if map.cellTile and map:cellTile(cx, cy) ~= GRASS_TILE then return false end
+
+    local bx, by = math.floor(cx / 2), math.floor(cy / 2)
+    local before = map:blockAt(bx, by)
+    local after = swapFor(game.data, before)
+    if not after then return false end
+
+    -- which 2x2 tile quadrant of the block this cell is
+    local qx, qy = (cx % 2) * 2, (cy % 2) * 2
+    local id = cutBlock(map.tileset, before, after, qx, qy)
+    if not id then return false end
+
+    local ok = mod.world and mod.world:replaceBlock(bx, by, id)
+    if not ok then return false end
+    remember(map.id, cx, cy)
+    -- AnimCut .grass: tall grass gets the leaf-swirl / dust puff rather
+    -- than the tree-split slide. Same call the engine's own Cut makes, and
+    -- never over one already in flight -- that animation owns a callback
+    -- and dropping it would strand whatever queued it.
+    if not quiet and ow.startDustAnim and not ow.dustAnim then
+      ow:startDustAnim(cx, cy)
+    end
+    return true
   end
 
   -- ------- the particles
@@ -394,8 +522,7 @@ return function(mod)
       return once("anchor", "RUN FX: waiting for the first step to take an anchor")
     end
 
-    local burnOn = enabled("burn")
-    if #particles == 0 and not burnOn then return end
+    if #particles == 0 then return end
     if not topIsOverworld(game) then
       return once("top", "RUN FX: the overworld is not the top state; standing down")
     end
@@ -431,49 +558,12 @@ return function(mod)
 
     local drew = 0
 
-    -- ------- the cut
-    --
-    -- One tile, the size of the clod the player ran over: a solid 16x16
-    -- patch of bare dark earth with a lighter band of cut stubble along its
-    -- top edge, so it reads as grass that has been taken off rather than as
-    -- a shadow lying on grass that is still there.
-    --
-    -- The cells the player's SPRITE currently covers are skipped, and that
-    -- is a rendering fact rather than a rule about grass: this draws over
-    -- the finished frame, so a patch on those cells would be painted across
-    -- the player himself. The sprite stands 16x16 at (px, py-4), and while
-    -- a step is in flight it straddles two cells -- hence a span rather
-    -- than a cell. The moment a heel clears the tile, the cut is there.
-    if burnOn then
-      local here = mod.world and mod.world:current()
-      local cells = here and burntCells(here.mapId, false)
-      if cells then
-        local rx = math.ceil(vp.width / sx / 32) + 1
-        local ry = math.ceil(vp.height / sy / 32) + 1
-        local hx = math.floor(player.px / 16)
-        local hy = math.floor(player.py / 16)
-        local sxa, sxb = hx, math.floor((player.px + 15) / 16)
-        local sya, syb = math.floor((player.py - 4) / 16),
-                         math.floor((player.py + 11) / 16)
-        for key in pairs(cells) do
-          local cx, cy
-          if type(key) == "string" then
-            cx, cy = key:match("^(-?%d+),(-?%d+)$")
-            cx, cy = tonumber(cx), tonumber(cy)
-          end
-          local underfoot = cx and cx >= sxa and cx <= sxb
-                            and cy >= sya and cy <= syb
-          if cx and cy and not underfoot
-             and math.abs(cx - hx) <= rx and math.abs(cy - hy) <= ry then
-            love.graphics.setColor(0.16, 0.12, 0.08, 0.92)
-            put(cx * 16, cy * 16, 16, 16)
-            love.graphics.setColor(0.38, 0.30, 0.18, 0.92)
-            put(cx * 16, cy * 16, 16, 3)
-            drew = drew + 2
-          end
-        end
-      end
-    end
+    -- The cut is not drawn here any more, and that is the point: it is a
+    -- real block swap in the map, so the engine draws it along with every
+    -- other tile. Nothing below is load-bearing -- switch the whole overlay
+    -- off and BURN GRASS still cuts, SAFE GRASS still works, and the puff
+    -- behind a running player is still there, because all three are the
+    -- engine's own drawing rather than ours.
 
     -- ------- the trail
     for i = 1, #particles do
@@ -526,6 +616,59 @@ return function(mod)
   mod.events:on("map.exited", clearTrail)
   mod.events:on("battle.started", clearTrail)
 
+  -- ------- the step that lands
+  --
+  -- `world.stepped` fires from OverworldState:onStepComplete, and it fires
+  -- EARLY in it -- a long way above the wild-encounter check at the bottom
+  -- of the same function. That ordering is the whole trick: cut the grass
+  -- here and by the time the encounter check looks, `Map:isGrassCell` is
+  -- already false and the engine declines the battle by itself. There is
+  -- nothing to suppress and no dice to second-guess.
+  mod.events:on("world.stepped", function(ev)
+    if type(ev) ~= "table" then return end
+    local game = live
+    if not game then return end
+
+    if enabled("burn") and running then
+      cutGrassAt(game, ev.x, ev.y)
+    end
+
+    -- The puff behind a running player is the ENGINE's dust animation --
+    -- the same one Cut leaves on grass -- placed on the cell just vacated.
+    -- It is drawn in the world pass at the right anchor under every camera
+    -- the engine has, which is the one thing a screen-space overlay can
+    -- never promise. The coloured particles ride on top of it.
+    local kind = fxKind()
+    local ow = game.overworld
+    if kind ~= "off" and running and ow and ow.startDustAnim
+       and not ow.dustAnim and anchor and anchor.facing then
+      local d = DIRV[anchor.facing]
+      if d then
+        ow:startDustAnim(ev.x - d[1], ev.y - d[2])
+        -- a trail is a flicker, not the eight beats a boulder gets
+        if ow.dustAnim then ow.dustAnim.frames = PUFF_FRAMES end
+      end
+    end
+  end)
+
+  -- A cut is a change to the running map, and the running map is rebuilt
+  -- from its record every time the game is loaded afresh. What was cut
+  -- lives in mod.save, so entering a map re-applies it -- quietly, with no
+  -- puff, because this is restoring a state rather than cutting anything.
+  mod.events:on("map.entered", function(ev)
+    local game, mapId = live, type(ev) == "table" and ev.mapId or nil
+    if not (game and mapId and enabled("burn")) then return end
+    local cells = burntCells(mapId, false)
+    if not cells then return end
+    for key in pairs(cells) do
+      if type(key) == "string" then
+        local cx, cy = key:match("^(-?%d+),(-?%d+)$")
+        cx, cy = tonumber(cx), tonumber(cy)
+        if cx and cy then cutGrassAt(game, cx, cy, true) end
+      end
+    end
+  end)
+
   -- Every logic tick: the moment the player is not moving, the fast value
   -- has done its job and stops being true of anything. The trail is ticked
   -- on the same fixed clock as the step it belongs to, so it neither
@@ -533,6 +676,7 @@ return function(mod)
   -- behind a menu.
   mod.hooks:wrap("input.step", function(next, game, dt)
     local out = next(game, dt)
+    live = game
     if tracked and not tracked.moving then restore() end
 
     advance()
@@ -597,47 +741,27 @@ return function(mod)
     return sped
   end)
 
-  -- ------- grass
+  -- ------- SAFE GRASS, and only SAFE GRASS
   --
-  -- Asked on every step onto tall grass. Three answers, in the order they
-  -- have to be checked:
+  -- BURN GRASS used to live here too, suppressing the battle on a cell it
+  -- had decided was burnt. It does not need to any more: the cut is a real
+  -- block swap, so `Map:isGrassCell` answers no and the engine never calls
+  -- this hook for that cell at all. A feature that needs no hook is the
+  -- better version of the feature.
   --
-  --   already burnt   nothing lives there any more, running or walking
-  --   burning it now  you set it alight this step, so nothing is left
-  --   SAFE GRASS      you ran through, and nothing had time to notice
-  --
-  -- All three throw the vanilla dice first and discard the answer, so a
-  -- suppressed step draws from love.math.random exactly what a vanilla
-  -- step would have drawn (see the header).
-  --
-  -- Everything about burning hangs off the row being ON, the scorch marks
-  -- included: switching BURN GRASS off puts the map back exactly as the
-  -- engine draws it and gives the grass its Pokemon back. What was burnt
-  -- is remembered rather than erased, so switching it on again returns the
-  -- map you actually left -- but a row you turned off is a row that does
-  -- nothing, and a player who tries this must not be stuck with a scarred
-  -- save and no way back.
+  -- What is left is the one thing that genuinely is a rule rather than a
+  -- change to the world: while you are RUNNING, tall grass starts no wild
+  -- battle. The vanilla dice are thrown first and the answer discarded, so
+  -- a suppressed step draws from love.math.random exactly what a vanilla
+  -- step would have drawn -- only the battle is missing, not the draw
+  -- underneath it.
   mod.hooks:wrap("encounter.roll", function(next, encDef, ctx)
     if type(ctx) ~= "table" or ctx.terrain ~= "grass" then
       return next(encDef, ctx)
     end
-    local burnOn, safeOn = enabled("burn"), enabled("safe")
-    if not (burnOn or safeOn) then return next(encDef, ctx) end
-
-    -- `encounter.roll` is handed the map but not the cell; the overworld
-    -- has already moved the player onto it, so this is that cell.
-    local here = mod.world and mod.world:current()
-    local x, y = here and here.x, here and here.y
     local rolled = next(encDef, ctx)
-    if not (x and y) then return rolled end
-
-    if burnOn and isBurnt(ctx.mapId, x, y) then return nil end
-    if not running then return rolled end
-    if burnOn then
-      burn(ctx.mapId, x, y)
-      return nil
-    end
-    return nil   -- SAFE GRASS is the only row left that could be on
+    if running and enabled("safe") then return nil end
+    return rolled
   end)
 
   -- The trail draws over the finished frame, after the world and the UI

@@ -9,13 +9,13 @@ return {
     added = {
       "holding B shortens a step, at a multiplier you choose: x1.5, x2, x3 or x4",
       "BOOST BIKE and BOOST SURF, both off by default",
-      "RUN FX: a trail off your heels while you run -- off, dust, flames or bolts",
-      "BURN GRASS (off): tall grass you RUN across is cut open one tile at a time, and cut grass holds no Pokemon",
+      "RUN FX: a trail off your heels while you run -- off, dust, flames or bolts; the engine's own dust puff is the anchor and the coloured particles ride on top",
+      "BURN GRASS (off): tall grass you RUN across is really CUT -- the same block swap OverworldState:tryCut makes -- one clod at a time, so the tile stops being grass and the engine stops rolling encounters on it by itself",
       "SAFE GRASS (off): running through tall grass never starts a wild battle",
     },
     changed = {
       "with the three new rows left alone, nothing but the duration of a step: a tile still costs a tile, and collision, triggers and the animation are untouched",
-      "BURN GRASS writes the burnt cells into mod.save, so a burnt route is still burnt after a reload -- and switching the row off puts the map back, burns remembered rather than erased",
+      "BURN GRASS writes the cut cells into mod.save, so entering the map again re-applies what was cut",
     },
     known = {
       "x2 is exactly the bicycle's own 8 frames, so at that setting your shoes have caught up with a vehicle -- this is a fact about Gen 1's bicycle, not a bug in the shoes",
@@ -23,9 +23,9 @@ return {
       "it calls the next handler first and multiplies the answer, so a mod that slows you down in a swamp keeps its say",
       "no sprint animation: the legs move at walking cadence, just over less ground-time -- Gen 1 has no running frames to draw",
       "scripted walks stay at the engine's own speed: a step's duration lives on the player and a cutscene's steps do not ask the hook, so until 1.1.0 an escort NPC and the player walked at different speeds and the player arrived ahead of the dialogue",
-      "the trail draws over the finished frame in true colour, so in the monochrome display modes it is the one thing on screen that is not a Game Boy shade",
-      "it stands down entirely while tilt mode or a world-replacing render pipeline owns the camera: a screen-space overlay cannot follow either, and drawing anyway would put the trail where the player is not",
-      "a suppressed encounter still throws the vanilla dice and discards them, so the RNG stream stays where the engine left it -- only the battle is missing",
+      "the coloured particles draw over the finished frame in true colour, so in the monochrome display modes they are the one thing on screen that is not a Game Boy shade; the puff underneath is the engine's own art and matches",
+      "the coloured particles stand down while tilt mode or a world-replacing render pipeline owns the camera: a screen-space overlay cannot follow either. The puff and the cut are engine drawing and are unaffected",
+      "SAFE GRASS still throws the vanilla dice and discards them, so the RNG stream stays where the engine left it -- only the battle is missing. BURN GRASS suppresses nothing at all: it cuts the tile before the encounter check looks at it",
     },
   },
 }

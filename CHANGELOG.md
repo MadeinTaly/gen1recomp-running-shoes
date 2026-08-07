@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.3.0
+
+- **`BURN GRASS` now really cuts the grass.** 1.2.x drew a dark patch over
+  the tile and called it burnt. It was not burnt — it was a shadow lying on
+  grass that was still standing, and the grass still had Pokémon in it.
+
+  The engine already knew how to do this. `OverworldState:tryCut` cuts tall
+  grass by **swapping a block**: `field.cutTreeSwaps` is a before/after
+  table of block ids out of the ROM, and cutting writes the "after" id into
+  the map and rebuilds the renderer. So the mod does the same thing, and
+  the grass is genuinely gone — gone from the picture, and gone from
+  `Map:isGrassCell`, which is the exact predicate the wild-encounter check
+  gates on.
+
+  One improvement on the engine's own Cut: a block is 2×2 cells, so
+  swapping it whole would take four tiles for one footstep. This assembles
+  a block that is the current block everywhere **except** the one cell's
+  2×2 tile quadrant, which comes from the cut one — a cut exactly one clod
+  wide, the size of the character, built only from tile ids the tileset
+  already contains.
+
+- **`BURN GRASS` no longer touches `encounter.roll` at all.** It does not
+  need to: the cut lands on `world.stepped`, which the engine emits near
+  the top of `onStepComplete`, a long way above the encounter check at the
+  bottom of the same function. By the time that check looks, the tile is
+  not tall grass, and the engine declines the battle by itself. A feature
+  that needs no hook is the better version of the feature.
+
+- **The trail no longer depends on the overlay to be visible.** Every
+  running step now drops the **engine's own dust puff** — the same
+  animation Cut leaves on grass — on the cell just vacated. That is drawn
+  in the world pass at the right anchor under every camera the engine has.
+  The coloured particles ride on top of it for the dust/flames/bolts
+  difference; if that surface is unavailable, the puff is still there.
+
+- **The tests now drive the engine instead of stubs.** The cut is asserted
+  against a real `src/world/Map` — `blockAt`, `tileAt`, `cellTile`,
+  `isGrassCell`, `setBlock` are the engine's own code — proving the tile
+  stops being grass, that the three neighbouring cells in the same block do
+  not, that a second cut in the same block works, and that entering a map
+  re-applies what was cut. The trail is asserted through the real
+  `Game.draw`, which is the check that would have caught an overlay wired
+  to a hook the engine never reached.
+
 ## 1.2.1
 
 - **`BURN GRASS` now cuts a tile, not a shadow.** The mark is a solid
