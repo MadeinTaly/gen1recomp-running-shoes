@@ -1,6 +1,6 @@
 -- Sharing metadata: read by tooling and the manager detail pane.
 return {
-  summary = "Hold B to walk faster. Gen 3 gave you these in five minutes; Gen 1 made you earn a bicycle.",
+  summary = "Hold B to walk faster -- and leave smoke, flames or lightning behind you, cut the tall grass you run through, or run past it without meeting a thing. Every extra has an off switch.",
   author = "MadeinTaly",
   support = "https://linktr.ee/made_in_taly",
   tags = { "quality-of-life", "movement", "beginner", "data-only" },
@@ -9,9 +9,13 @@ return {
     added = {
       "holding B shortens a step, at a multiplier you choose: x1.5, x2, x3 or x4",
       "BOOST BIKE and BOOST SURF, both off by default",
+      "RUN FX: a trail off your heels while you run -- off, smoke, flames or bolts -- reaching about three and a half cells back and fading the whole way out",
+      "BURN GRASS (off): tall grass you RUN across is really CUT, one clod at a time, following every cell of your path -- the tile stops being grass, so the engine stops rolling encounters on it by itself",
+      "SAFE GRASS (off): running through tall grass never starts a wild battle",
     },
     changed = {
-      "nothing but the duration of a step: a tile still costs a tile, and collision, triggers and the animation are untouched",
+      "with the three new rows left alone, nothing but the duration of a step: a tile still costs a tile, and collision, triggers and the animation are untouched",
+      "BURN GRASS writes the cut cells into mod.save, so entering the map again re-applies what was cut",
     },
     known = {
       "x2 is exactly the bicycle's own 8 frames, so at that setting your shoes have caught up with a vehicle -- this is a fact about Gen 1's bicycle, not a bug in the shoes",
@@ -19,6 +23,9 @@ return {
       "it calls the next handler first and multiplies the answer, so a mod that slows you down in a swamp keeps its say",
       "no sprint animation: the legs move at walking cadence, just over less ground-time -- Gen 1 has no running frames to draw",
       "scripted walks stay at the engine's own speed: a step's duration lives on the player and a cutscene's steps do not ask the hook, so until 1.1.0 an escort NPC and the player walked at different speeds and the player arrived ahead of the dialogue",
+      "the coloured particles draw over the finished frame in true colour, so in the monochrome display modes they are the one thing on screen that is not a Game Boy shade; the puff underneath is the engine's own art and matches",
+      "the coloured particles stand down while tilt mode or a world-replacing render pipeline owns the camera: a screen-space overlay cannot follow either. The puff and the cut are engine drawing and are unaffected",
+      "SAFE GRASS still throws the vanilla dice and discards them, so the RNG stream stays where the engine left it -- only the battle is missing. BURN GRASS suppresses nothing at all: it cuts the tile before the encounter check looks at it",
     },
   },
 }

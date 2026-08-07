@@ -6,6 +6,32 @@ Gen 3 handed you running shoes in the first five minutes. Gen 1 made you
 walk to Cerulean, beat a gym, and buy a bicycle voucher off a man in a
 skyscraper. This evens things up slightly.
 
+## New in 1.4.0 — a run that leaves something behind
+
+Three extras, and **every one of them has an off switch**, on the mod's own
+options page. Nothing here is permanent and nothing is forced on you.
+
+**A trail off your heels while you run.** Pick **smoke**, **flames** or
+**lightning** — it reaches about three and a half cells back and fades the
+whole way out. Set `RUN FX` to `OFF` and the picture is exactly what it was
+before; the trail draws over the finished frame and changes nothing
+underneath it, not a tile, not a flag, and not one roll of the dice that
+decide encounters.
+
+**Grass you can cut by running through it.** `BURN GRASS` cuts the tall
+grass you *run* across, one clod at a time — the size of your character,
+following every cell of your path — using the same block swap the CUT move
+uses. Cut grass has no Pokémon in it, because it genuinely is not tall
+grass any more. **Off by default**, and walking never cuts anything.
+
+**Grass you can run straight through.** `SAFE GRASS` means a run through
+tall grass never starts a wild battle. Walking is left exactly as it was,
+so the grass is still dangerous — you just have a way past it. **Off by
+default.**
+
+Leave all three alone and the mod is what it always was: a step gets
+shorter when you hold B, and nothing else in the game moves.
+
 ## Install
 
 Download `running_shoes-<version>.zip` from [Releases](../../releases),
@@ -28,6 +54,85 @@ Hold **B** while walking. That is the whole interface.
 | `RUN SPEED` | x1.5 / **x2** / x3 / x4 | how much shorter a step gets |
 | `BOOST BIKE` | off | whether the bicycle gets it too |
 | `BOOST SURF` | off | whether surfing does |
+| `RUN FX` | off / **dust** / flames / bolts | what a run leaves behind you |
+| `BURN GRASS` | **off** | running across tall grass cuts it |
+| `SAFE GRASS` | **off** | running through tall grass meets nothing |
+
+Every row above turns off. `RUN FX` on `OFF` restores the vanilla picture,
+and the other two ship off already.
+
+## The three extras
+
+**`RUN FX`** leaves a trail off your heels while you hold B, reaching about
+**three and a half cells back** and fading the whole way out.
+
+| | |
+| --- | --- |
+| `DUST` | smoke — greys, no hard edge, and it **expands** as it thins, the way smoke does. The engine's own dust puff anchors the first cell. |
+| `FLAMES` | orange at the heel, **red** through the middle, ember at the end, shrinking as it dies down. |
+| `BOLTS` | a white-hot core cooling through **yellow** into amber, lit on alternate ticks so it crackles rather than glows. |
+
+The length is measured in **cells of ground, not frames**, because frames
+are not a length: a step is 8 frames at x2 and 4 at x4, so a fixed lifetime
+would draw a trail twice as long at half the speed. Particles are left in
+world space and you run away from them, so the lifetime comes off the step
+duration and the trail stays the same length on the ground at every setting.
+
+Nothing underneath changes — no tile, no flag, and not one draw of the
+random number generator that decides encounters and battles. The trail has
+its own tiny generator for exactly that reason: a spark that moved the
+game's dice would be a spark you could see in a battle log.
+
+Two places the coloured layer stands down rather than draw in the wrong
+spot: **tilt mode**, and a mod's **render pipeline** that replaces the
+world pass. Both move the camera in ways a screen-space overlay cannot
+follow. The puff underneath is unaffected.
+
+**If you see nothing, the log will say why.** Every reason the overlay
+stands down is written to the log once, and ten seconds of play without the
+`render.hud` hook ever being reached logs the one cause the mod cannot work
+around: an engine build from before that hook existed. On such a build the
+puff and the cut still work — they are the engine's own drawing.
+
+**`BURN GRASS`** *cuts* the tall grass you run across, exactly the way the
+CUT move cuts it — walking never cuts anything.
+
+This is not a mark drawn on top of the grass. The engine cuts tall grass by
+**swapping a block**: `field.cutTreeSwaps` is a before/after table of block
+ids out of the ROM, and `OverworldState:tryCut` writes the "after" id into
+the map and rebuilds the renderer. The mod does the same thing, so the
+grass is genuinely gone — gone from the picture, and gone from
+`Map:isGrassCell`, which is the exact predicate the wild-encounter check
+gates on. There is no suppression and no overlay: the tile simply is not
+tall grass any more.
+
+Two improvements on the engine's own Cut.
+
+A block is 2×2 cells, so swapping it whole would take four tiles for one
+footstep. Instead this rebuilds the block with the grass taken out of **one
+cell's 2×2 tile quadrant** — a cut exactly one clod wide, the size of your
+character, built only from tile ids the tileset already contains. No art is
+invented and nothing ROM-derived is shipped.
+
+And the swap table is read for *which tile the grass becomes*, not for
+which blocks are allowed to be cut. That table only names the blocks CUT
+was ever meant to be used on, so matching whole blocks against it left
+holes wherever you ran across a grass block it had never heard of. Comparing
+one before/after pair tile by tile gives the ground the grass was standing
+on, and with that single tile id **every** cell you run over is cut, so the
+path is unbroken.
+
+What you cut is written into `mod.save` and travels with your save file, so
+entering the map again re-applies it.
+
+**`SAFE GRASS`** is the smaller version of the same idea with nothing
+permanent about it: while you are running, tall grass never starts a wild
+battle. Walk and it is as dangerous as it ever was.
+
+Both suppress the battle by throwing the vanilla dice first and *discarding*
+the answer, so a suppressed step draws from the RNG exactly what a vanilla
+step would have drawn. Only the battle is missing; the stream underneath it
+is where the engine left it.
 
 ## The numbers, since you asked
 
@@ -66,13 +171,19 @@ hurry.
 **There is no running animation.** Gen 1 does not have one — there were no
 sprint frames to draw, because nobody in 1996 had thought of it. Your legs
 keep the walking cadence and simply spend less time on each tile. It reads
-as a brisk walk, which is historically accurate and slightly funny.
+as a brisk walk, which is historically accurate and slightly funny. `RUN FX`
+is a trail, not a sprint cycle: the sprite is still the sprite.
 
-**It changes nothing but the duration of a step.** A tile still costs a
-tile. Collision, encounters, triggers, ledges, warps and the step itself
-are untouched, so the world has no idea how fast you crossed it. Grass does
-not become less dangerous because you hurried through it, and no, this is
-not an encounter-rate mod.
+**Out of the box it changes nothing but the duration of a step.** A tile
+still costs a tile. Collision, encounters, triggers, ledges, warps and the
+step itself are untouched, so the world has no idea how fast you crossed
+it. Grass does not become less dangerous because you hurried through it —
+unless you go and switch `BURN GRASS` or `SAFE GRASS` on, which is a
+deliberate two-button trip through the options page and says so on the row.
+
+**It is still not an encounter-rate mod.** `SAFE GRASS` does not lower a
+rate; it declines the battle outright while you are running, and leaves
+walking exactly as it was.
 
 **It plays well with others.** The hook calls the next handler first and
 multiplies whatever comes back, so a mod that slows you down in a swamp
