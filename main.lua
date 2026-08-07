@@ -106,17 +106,26 @@ local DIRV = { up = { 0, -1 }, down = { 0, 1 },
 
 -- Three shades each, oldest last, because three shades is what a Game Boy
 -- sprite had and a smooth gradient would read as somebody else's engine.
+--
+-- Dust is a warm brown rather than the pale grey a first pass reached for:
+-- pale grey at half opacity over Route 1's light green is a rumour, not an
+-- effect. Everything here is picked to survive being drawn over grass.
 local SHADES = {
-  dust = { { 0.87, 0.85, 0.77 }, { 0.68, 0.66, 0.58 }, { 0.47, 0.45, 0.40 } },
-  fire = { { 1.00, 0.93, 0.52 }, { 0.97, 0.53, 0.12 }, { 0.70, 0.15, 0.08 } },
-  bolt = { { 1.00, 1.00, 1.00 }, { 0.60, 0.90, 1.00 }, { 0.28, 0.52, 0.95 } },
+  dust = { { 0.72, 0.60, 0.42 }, { 0.55, 0.44, 0.30 }, { 0.36, 0.29, 0.20 } },
+  fire = { { 1.00, 0.90, 0.30 }, { 0.98, 0.45, 0.05 }, { 0.72, 0.10, 0.04 } },
+  bolt = { { 1.00, 1.00, 1.00 }, { 0.45, 0.85, 1.00 }, { 0.15, 0.35, 0.95 } },
 }
 
-local LIFE = { dust = 24, fire = 20, bolt = 8 }
+-- Every particle gets a one-pixel black skirt underneath it, the way a GB
+-- sprite gets its darkest shade: without it a bright blob on a bright tile
+-- has no edge and reads as a glitch rather than as a thing.
+local OUTLINE = { 0.05, 0.04, 0.04 }
+
+local LIFE = { dust = 26, fire = 22, bolt = 10 }
 
 -- one particle every N logic ticks while running; bolts are rarer because
 -- lightning that arrives continuously is a light bulb
-local CADENCE = { dust = 2, fire = 2, bolt = 4 }
+local CADENCE = { dust = 1, fire = 1, bolt = 2 }
 
 -- a bolt is not a blob: four pixels stacked in a zigzag, drawn upward from
 -- the spawn point
@@ -304,11 +313,11 @@ return function(mod)
   end
 
   local function sizeOf(kind, p)
-    if kind == "bolt" then return 1 end
+    if kind == "bolt" then return 2 end
     local t = p.life / p.max
-    if t > 0.6 then return kind == "fire" and 3 or 2 end
-    if t > 0.3 then return 2 end
-    return 1
+    if t > 0.6 then return kind == "fire" and 5 or 4 end
+    if t > 0.3 then return 3 end
+    return 2
   end
 
   -- The world pass is not always a flat blit of the world canvas: tilt
@@ -343,22 +352,56 @@ return function(mod)
     return s
   end
 
+  -- The overworld has to be the state actually on top -- not merely on the
+  -- stack -- or the trail would drift over a menu or a battle. `isOverworld`
+  -- is read as truthy rather than compared to `true`: it is a marker, and
+  -- what a marker is set TO is the engine's business, not ours.
   local function topIsOverworld(game)
     local states = game and game.stack and game.stack.states
-    local top = states and states[#states]
-    return top ~= nil and top.isOverworld == true
+    if not states then return true end   -- nothing to gate on; do not vanish
+    local top = states[#states]
+    return top ~= nil and top.isOverworld and true or false
   end
+
+  -- ------- saying why, once
+  --
+  -- An effect that is simply absent is the worst thing to debug from the
+  -- outside, so every reason the overlay declines to draw is logged the
+  -- first time it happens, and the first frame it DOES draw says so too.
+  -- One line each, ever: this is a per-frame path.
+  local told = {}
+  local function once(key, fmt, ...)
+    if told[key] then return end
+    told[key] = true
+    mod.log:info(fmt, ...)
+  end
+
+  -- `render.hud` is the surface this draws on, and an engine build from
+  -- before it existed simply never calls it: no error, no warning, and an
+  -- effect that is silently impossible. Ten seconds of logic ticks with the
+  -- hook never once reached is that build, and it is worth saying out loud
+  -- rather than leaving somebody staring at a working option that does
+  -- nothing.
+  local hudCalls, ticks = 0, 0
 
   local function overlay(game, vp)
     if not (love and love.graphics and love.graphics.rectangle) then return end
-    if type(vp) ~= "table" or not (vp.width and vp.height) then return end
+    if type(vp) ~= "table" or not (vp.width and vp.height) then
+      return once("viewport", "RUN FX: no viewport to draw into")
+    end
     local player = anchor
-    if not (player and player.px and player.py) then return end
+    if not (player and player.px and player.py) then
+      return once("anchor", "RUN FX: waiting for the first step to take an anchor")
+    end
 
     local burnOn = enabled("burn")
     if #particles == 0 and not burnOn then return end
-    if not topIsOverworld(game) then return end
-    if not flatWorld(game) then return end
+    if not topIsOverworld(game) then
+      return once("top", "RUN FX: the overworld is not the top state; standing down")
+    end
+    if not flatWorld(game) then
+      return once("flat", "RUN FX: tilt or a world pipeline owns the camera; standing down")
+    end
 
     local sp = worldScale(game, vp)
     local sx = sp / (tonumber(vp.dpiX) or 1)
@@ -377,40 +420,56 @@ return function(mod)
     end
 
     love.graphics.push("all")
+    -- The engine leaves this surface clean, but "leaves it clean" is a
+    -- promise about today's compositor and this is somebody else's frame.
+    -- A palette shader still bound would remap these colours to whatever it
+    -- pleased, which is one of the ways an effect ends up invisible rather
+    -- than wrong. Say what we need.
+    love.graphics.setShader()
+    love.graphics.setScissor()
+    if love.graphics.setBlendMode then love.graphics.setBlendMode("alpha") end
 
-    -- ------- scorched cells
+    local drew = 0
+
+    -- ------- the cut
     --
-    -- A checker of 4x4 world-pixel squares rather than a solid block: the
-    -- grass underneath still shows through the gaps, so the cell reads as
-    -- charred stubble instead of a hole cut in the map. The cell the
-    -- player is standing on is skipped, because this draws OVER the
-    -- finished frame and a solid patch on his own tile would char him too.
+    -- One tile, the size of the clod the player ran over: a solid 16x16
+    -- patch of bare dark earth with a lighter band of cut stubble along its
+    -- top edge, so it reads as grass that has been taken off rather than as
+    -- a shadow lying on grass that is still there.
+    --
+    -- The cells the player's SPRITE currently covers are skipped, and that
+    -- is a rendering fact rather than a rule about grass: this draws over
+    -- the finished frame, so a patch on those cells would be painted across
+    -- the player himself. The sprite stands 16x16 at (px, py-4), and while
+    -- a step is in flight it straddles two cells -- hence a span rather
+    -- than a cell. The moment a heel clears the tile, the cut is there.
     if burnOn then
       local here = mod.world and mod.world:current()
       local cells = here and burntCells(here.mapId, false)
-      if cells and here.x then
-        -- how far a cell can be from the player and still be on screen, at
-        -- whatever zoom this frame is drawn at, so the loop never walks a
-        -- whole burnt region to reject it
+      if cells then
         local rx = math.ceil(vp.width / sx / 32) + 1
         local ry = math.ceil(vp.height / sy / 32) + 1
-        love.graphics.setColor(0.10, 0.08, 0.07, 0.62)
+        local hx = math.floor(player.px / 16)
+        local hy = math.floor(player.py / 16)
+        local sxa, sxb = hx, math.floor((player.px + 15) / 16)
+        local sya, syb = math.floor((player.py - 4) / 16),
+                         math.floor((player.py + 11) / 16)
         for key in pairs(cells) do
           local cx, cy
           if type(key) == "string" then
             cx, cy = key:match("^(-?%d+),(-?%d+)$")
             cx, cy = tonumber(cx), tonumber(cy)
           end
-          if cx and cy and math.abs(cx - here.x) <= rx
-             and math.abs(cy - here.y) <= ry
-             and not (cx == here.x and cy == here.y) then
-            for i = 0, 3 do
-              for j = 0, 3 do
-                if (i + j) % 2 == 0 then
-                  put(cx * 16 + i * 4, cy * 16 + j * 4, 4, 4)
-                end
-              end
-            end
+          local underfoot = cx and cx >= sxa and cx <= sxb
+                            and cy >= sya and cy <= syb
+          if cx and cy and not underfoot
+             and math.abs(cx - hx) <= rx and math.abs(cy - hy) <= ry then
+            love.graphics.setColor(0.16, 0.12, 0.08, 0.92)
+            put(cx * 16, cy * 16, 16, 16)
+            love.graphics.setColor(0.38, 0.30, 0.18, 0.92)
+            put(cx * 16, cy * 16, 16, 3)
+            drew = drew + 2
           end
         end
       end
@@ -422,21 +481,33 @@ return function(mod)
       local c = shadeOf(p.kind, p)
       if p.kind == "bolt" then
         -- a bolt is lit on alternate ticks: a spark that burns steadily
-        -- for eight frames is a lamp, not lightning
+        -- for ten frames is a lamp, not lightning
         if p.life % 2 == 1 then
+          love.graphics.setColor(OUTLINE[1], OUTLINE[2], OUTLINE[3], 0.9)
+          for _, off in ipairs(BOLT) do
+            put(p.x + off[1], p.y + off[2] + 1, 2, 2)
+          end
           love.graphics.setColor(c[1], c[2], c[3], 1)
           for _, off in ipairs(BOLT) do
-            put(p.x + off[1], p.y + off[2], 1, 1)
+            put(p.x + off[1], p.y + off[2], 2, 2)
           end
+          drew = drew + 1
         end
       else
         local size = sizeOf(p.kind, p)
-        love.graphics.setColor(c[1], c[2], c[3], 0.35 + 0.6 * (p.life / p.max))
+        local alpha = 0.55 + 0.45 * (p.life / p.max)
+        love.graphics.setColor(OUTLINE[1], OUTLINE[2], OUTLINE[3], alpha * 0.8)
+        put(p.x - 1, p.y + 1, size + 2, size + 2)
+        love.graphics.setColor(c[1], c[2], c[3], alpha)
         put(p.x, p.y, size, size)
+        drew = drew + 1
       end
     end
 
     love.graphics.pop()
+    if drew > 0 then
+      once("drawing", "RUN FX: drawing (%d marks this frame, scale %g)", drew, sp)
+    end
   end
 
   -- ------- wiring
@@ -465,6 +536,11 @@ return function(mod)
     if tracked and not tracked.moving then restore() end
 
     advance()
+    ticks = ticks + 1
+    if ticks > 600 and hudCalls == 0 then
+      once("nohud", "RUN FX cannot draw: this engine build never calls the "
+        .. "render.hud hook. Update Gen1Recomp; the speed rows are unaffected.")
+    end
     local kind = fxKind()
     if kind ~= "off" and anchor and anchor.moving and running then
       -- B is re-read here rather than trusted from the step that started:
@@ -473,8 +549,15 @@ return function(mod)
       local input = game and game.input
       if input and input.isDown and input:isDown("b") then
         spawnClock = spawnClock + 1
-        if spawnClock % (CADENCE[kind] or 2) == 0 then emit(kind, anchor) end
+        if spawnClock % (CADENCE[kind] or 2) == 0 then
+          emit(kind, anchor)
+          once("spawn", "RUN FX: %s trail spawning", kind)
+        end
+      else
+        once("nob", "RUN FX: running step, but B is not down at tick time")
       end
+    elseif kind == "off" and running and anchor and anchor.moving then
+      once("fxoff", "RUN FX: the RUN FX row is OFF")
     end
     return out
   end)
@@ -563,6 +646,7 @@ return function(mod)
   -- wrapper is expected to.
   mod.hooks:wrap("render.hud", function(next, game, viewport)
     local out = next(game, viewport)
+    hudCalls = hudCalls + 1
     overlay(game, viewport)
     return out
   end)

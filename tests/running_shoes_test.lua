@@ -413,6 +413,27 @@ STUB.save.options.tilt = 35
 T.eq(hud(), 0, "the overlay stands down while tilt owns the world pass")
 STUB.save.options.tilt = 0
 
+-- an engine build with no render.hud call site draws nothing and says so
+-- rather than leaving a working option that quietly does nothing
+do
+  local seen = {}
+  local realInfo = require("src.core.Logger").info
+  require("src.core.Logger").info = function(fmt, ...)
+    seen[#seen + 1] = tostring(fmt)
+    return realInfo(fmt, ...)
+  end
+  for _ = 1, 620 do
+    Runtime.call("input.step", function() end, released, 1 / 60)
+  end
+  require("src.core.Logger").info = realInfo
+  local said = false
+  for _, line in ipairs(seen) do
+    if line:find("render.hud", 1, true) then said = true end
+  end
+  -- render.hud HAS been called in this suite, so the warning must NOT fire
+  T.check(not said, "with render.hud reached, no stale-engine warning is logged")
+end
+
 -- the trail belongs to the map it was shed on
 runner.moving = true
 speed(WALK, ctx{ b = true, player = runner })
@@ -427,18 +448,35 @@ T.eq(hud(), 0, "leaving the map clears the trail")
 -- the engine draws it without touching what was burnt.
 
 setOpt("fx", "off")
-WORLD.player.cellX, WORLD.player.cellY = 9, 9   -- next to the burnt 8,9
+
+-- The skip is measured off the SPRITE, not off the logical cell, because
+-- what it is avoiding is painting over the player -- so these move the
+-- anchor's pixels as well as the cell mod.world reports.
+local function stand(cx, cy)
+  WORLD.player.cellX, WORLD.player.cellY = cx, cy
+  runner.px, runner.py = cx * 16, cy * 16
+  runner.moving = false
+  speed(WALK, ctx{ b = false, player = runner })
+end
+
+stand(9, 9)                                     -- next to the burnt 8,9
 T.eq(hud(), 0, "with BURN GRASS off a burnt cell draws nothing")
 setOpt("burn", true)
-T.check(hud() > 0, "a burnt cell within view is scorched over the frame")
+T.check(hud() > 0, "a burnt cell within view is cut open over the frame")
 
 -- the cell underfoot is skipped: this draws OVER the finished frame, so a
--- patch on the player's own tile would char the player too
-WORLD.player.cellX, WORLD.player.cellY = 8, 9
-T.eq(hud(), 0, "standing on the burnt cell, nothing is drawn over you")
+-- patch on the player's own tile would paint across the player himself
+stand(8, 9)
+T.eq(hud(), 0, "standing on the cut cell, nothing is drawn over you")
+
+-- a step in flight straddles two cells, and the sprite stands 4px proud of
+-- its own, so the skip is a span: neither cell the sprite touches is cut
+-- open under it
+runner.px, runner.py = 8 * 16, 9 * 16 - 8       -- half a step north of 8,9
+T.eq(hud(), 0, "mid-step, the cell the sprite is still half on is skipped too")
 
 -- and a burn half a region away is never walked over by the draw loop
-WORLD.player.cellX, WORLD.player.cellY = 90, 90
+stand(90, 90)
 T.eq(hud(), 0, "a burnt cell far off screen costs no draws")
 setOpt("burn", false)
 

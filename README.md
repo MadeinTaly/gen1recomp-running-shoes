@@ -47,12 +47,24 @@ Two places it stands down rather than draw in the wrong spot: **tilt mode**,
 and a mod's **render pipeline** that replaces the world pass. Both move the
 camera in ways a screen-space overlay cannot follow, so it waits them out.
 
-**`BURN GRASS`** scorches the tall grass you *run* across — walking never
-burns anything — and scorched grass holds no Pokémon. Walk back over it a
-week later and it is still empty, because the burnt cells are written into
-`mod.save` and travel with your save file. The scorch itself is drawn over
-the tile as charred stubble, so the cell underfoot is skipped: a solid
-patch on your own tile would char you along with the grass.
+**If you see nothing, the log will say why.** Every reason the overlay
+stands down is written to the log once, and ten seconds of play without the
+`render.hud` hook ever being reached logs the one cause the mod cannot work
+around: an engine build from before that hook existed, on which the trail
+is silently impossible. The speed rows keep working on such a build.
+
+**`BURN GRASS`** cuts open the tall grass you *run* across — walking never
+burns anything — and cut grass holds no Pokémon. Walk back over it a week
+later and it is still empty, because the burnt cells are written into
+`mod.save` and travel with your save file.
+
+The mark is one tile: a solid 16×16 patch of bare earth with a band of cut
+stubble along its top edge, exactly the size of the clod you ran over. The
+cells your sprite is currently standing on are skipped, and that is a
+drawing fact rather than a rule about grass — this is painted over the
+finished frame, so a patch there would be painted across you. A step in
+flight straddles two cells, so both are skipped, and the cut appears the
+instant your heel clears the tile.
 
 Switching the row back **off** puts the map back exactly as the engine
 draws it and gives the grass its Pokémon back — a row you turned off is a

@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.2.1
+
+- **`BURN GRASS` now cuts a tile, not a shadow.** The mark is a solid
+  16×16 patch of bare earth with a band of cut stubble along its top edge —
+  exactly the size of the clod you ran over — instead of the faint checker
+  1.2.0 drew. It reads as grass that has been taken off rather than as a
+  shadow lying on grass that is still there.
+
+  The cells skipped while drawing are now measured off the **sprite**
+  rather than off the logical cell, so a step in flight skips both cells it
+  straddles and the cut appears the instant your heel clears the tile.
+
+- **`RUN FX` made visible.** 1.2.0's dust was a pale grey at half opacity,
+  which over Route 1's green is a rumour rather than an effect. Particles
+  are now roughly twice the size, close to opaque, warm brown for dust, and
+  every one gets a one-pixel black skirt underneath — the way a Game Boy
+  sprite gets its darkest shade — so they have an edge on a bright tile.
+  They also spawn on every tick rather than every other one.
+
+- The overlay now clears the shader, scissor and blend mode before it
+  draws. The engine leaves that state clean today, but "leaves it clean" is
+  a promise about the current compositor, and a palette shader still bound
+  would remap these colours to whatever it pleased — one of the ways an
+  effect ends up invisible rather than wrong.
+
+- **It now says why when it cannot draw.** Every reason the overlay stands
+  down is logged once, and ten seconds of play with the `render.hud` hook
+  never reached logs the one cause the mod cannot fix: an engine build from
+  before that hook existed, on which the trail is silently impossible. The
+  speed rows are unaffected on such a build.
+
 ## 1.2.0
 
 - **New: `RUN FX` — a trail behind you while you run.** `OFF` / **`DUST`** /
