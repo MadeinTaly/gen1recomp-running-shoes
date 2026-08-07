@@ -1,6 +1,6 @@
 -- Sharing metadata: read by tooling and the manager detail pane.
 return {
-  summary = "Hold B to walk faster. Gen 3 gave you these in five minutes; Gen 1 made you earn a bicycle.",
+  summary = "Hold B to walk faster -- and leave smoke, flames or lightning behind you, cut the tall grass you run through, or run past it without meeting a thing. Every extra has an off switch.",
   author = "MadeinTaly",
   support = "https://linktr.ee/made_in_taly",
   tags = { "quality-of-life", "movement", "beginner", "data-only" },

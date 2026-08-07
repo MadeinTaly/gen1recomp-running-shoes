@@ -2,6 +2,17 @@
 
 ## 1.4.0
 
+**A run now leaves something behind — and every bit of it has an off
+switch.** Pick a trail of **smoke**, **flames** or **lightning** off your
+heels; **cut** the tall grass you run across, one clod at a time, the way
+the CUT move cuts it, so that grass has no Pokémon left in it; or run
+straight through tall grass without ever starting a wild battle.
+
+`RUN FX` set to `OFF` restores the vanilla picture exactly. `BURN GRASS`
+and `SAFE GRASS` ship **off**. Leave all three alone and this is still what
+it always was: a step gets shorter when you hold B, and nothing else in the
+game moves.
+
 - **The cut now follows the player, with no holes in it.** 1.3.0 matched a
   grass block against `field.cutTreeSwaps` by **block id**, and that table
   only names the specific blocks CUT was ever meant to be used on. Run

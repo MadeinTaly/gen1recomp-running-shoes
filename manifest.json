@@ -12,6 +12,6 @@
   "optional_dependencies": [],
   "conflicts": [],
   "permissions": [],
-  "description": "Hold B to walk faster, at a speed you pick: x1.5, x2, x3 or x4. Rides the engine's own movement.speed hook, whose comment names running shoes as the reason it exists. A run can leave a trail behind you -- dust, flames or lightning -- and, if you switch them on, CUT the tall grass it crosses one clod at a time, the way the CUT move does, or run through it without meeting anything. Optional boosts for the bicycle and for surfing. Everything past the speed itself is a row you turn on.",
+  "description": "Hold B to walk faster, at a speed you pick: x1.5, x2, x3 or x4. Rides the engine's own movement.speed hook, whose comment names running shoes as the reason it exists. NEW: a run can leave a trail off your heels -- smoke, flames or lightning -- reaching about three and a half cells back; it can CUT the tall grass you run across, one clod at a time, the way the CUT move cuts it, so that grass has no Pokemon left in it; and it can carry you through tall grass without ever starting a wild battle. Every one of those has an off switch, the last two ship off, and with all three left alone nothing but the duration of a step changes. Optional boosts for the bicycle and for surfing too.",
   "github": "MadeinTaly/gen1recomp-running-shoes"
 }

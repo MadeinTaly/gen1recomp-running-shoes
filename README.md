@@ -6,6 +6,32 @@ Gen 3 handed you running shoes in the first five minutes. Gen 1 made you
 walk to Cerulean, beat a gym, and buy a bicycle voucher off a man in a
 skyscraper. This evens things up slightly.
 
+## New in 1.4.0 — a run that leaves something behind
+
+Three extras, and **every one of them has an off switch**, on the mod's own
+options page. Nothing here is permanent and nothing is forced on you.
+
+**A trail off your heels while you run.** Pick **smoke**, **flames** or
+**lightning** — it reaches about three and a half cells back and fades the
+whole way out. Set `RUN FX` to `OFF` and the picture is exactly what it was
+before; the trail draws over the finished frame and changes nothing
+underneath it, not a tile, not a flag, and not one roll of the dice that
+decide encounters.
+
+**Grass you can cut by running through it.** `BURN GRASS` cuts the tall
+grass you *run* across, one clod at a time — the size of your character,
+following every cell of your path — using the same block swap the CUT move
+uses. Cut grass has no Pokémon in it, because it genuinely is not tall
+grass any more. **Off by default**, and walking never cuts anything.
+
+**Grass you can run straight through.** `SAFE GRASS` means a run through
+tall grass never starts a wild battle. Walking is left exactly as it was,
+so the grass is still dangerous — you just have a way past it. **Off by
+default.**
+
+Leave all three alone and the mod is what it always was: a step gets
+shorter when you hold B, and nothing else in the game moves.
+
 ## Install
 
 Download `running_shoes-<version>.zip` from [Releases](../../releases),
@@ -29,9 +55,11 @@ Hold **B** while walking. That is the whole interface.
 | `BOOST BIKE` | off | whether the bicycle gets it too |
 | `BOOST SURF` | off | whether surfing does |
 | `RUN FX` | off / **dust** / flames / bolts | what a run leaves behind you |
+| `BURN GRASS` | **off** | running across tall grass cuts it |
+| `SAFE GRASS` | **off** | running through tall grass meets nothing |
 
-| `BURN GRASS` | off | running across tall grass scorches it |
-| `SAFE GRASS` | off | running through tall grass meets nothing |
+Every row above turns off. `RUN FX` on `OFF` restores the vanilla picture,
+and the other two ship off already.
 
 ## The three extras
 
