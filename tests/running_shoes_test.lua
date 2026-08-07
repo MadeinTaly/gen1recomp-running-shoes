@@ -52,7 +52,13 @@ T.eq(speed(WALK, ctx{ b = true, surfing = true }), WALK,
 -- ------- every rung of the ladder
 
 local loader = run.loader
-local function setSpeed(value) loader.modOptions.running_shoes = { speed = value } end
+-- One options table for the whole suite, written key by key: the rows are
+-- independent of each other and a wholesale replace would silently reset
+-- whichever one the previous section had turned on.
+local OPTS = {}
+loader.modOptions.running_shoes = OPTS
+local function setOpt(key, value) OPTS[key] = value end
+local function setSpeed(value) setOpt("speed", value) end
 
 for _, case in ipairs({
   { "1.5", 11 },   -- 16 / 1.5 = 10.67, rounded
@@ -236,6 +242,208 @@ if REAL then
   T.eq(ticksToCross(p), WALK,
     "so the escort's scripted step runs at the NPC's speed, not the player's")
 end
+
+-- ------- 1.2.0: the grass
+--
+-- `encounter.roll` is asked on every step onto tall grass and nil
+-- suppresses the battle.  These drive it the way OverworldState does and
+-- assert the three answers the mod can give, plus the two things it must
+-- never do: touch a non-grass roll, and skip the vanilla draw.
+
+T.check(Runtime.wantsHook("encounter.roll"), "the encounter.roll hook is claimed")
+T.check(Runtime.wantsHook("render.hud"), "the render.hud hook is claimed")
+
+-- mod.world resolves the live overworld by scanning the state stack for
+-- the isOverworld marker, so a stub with one such state is the whole of
+-- what the mod reads: a map id, a cell, and the options table the overlay
+-- checks before it draws.
+local STUB = {
+  data = Data,
+  save = { flags = {}, options = { zoom = 0, tilt = 0 } },
+  input = { isDown = function(_, btn) return btn == "b" end },
+}
+local WORLD = { isOverworld = true, map = { id = "ROUTE_1" },
+                player = { cellX = 3, cellY = 4, facing = "down" } }
+STUB.stack = { states = { WORLD } }
+loader.game = STUB
+
+local rolls = 0
+local function vanillaRoll()
+  rolls = rolls + 1
+  return { species = "PIKACHU", level = 3 }
+end
+local function grass()
+  return { mapId = "ROUTE_1", terrain = "grass", rng = function() return 0 end }
+end
+local function roll(c)
+  return Runtime.call("encounter.roll", vanillaRoll, {}, c or grass())
+end
+
+local function walkOnto(cx, cy)
+  WORLD.player.cellX, WORLD.player.cellY = cx, cy
+  speed(WALK, ctx{ b = false })       -- a plain step: not running
+end
+local function runOnto(cx, cy)
+  WORLD.player.cellX, WORLD.player.cellY = cx, cy
+  speed(WALK, ctx{ b = true })        -- holding B: the shoes are in play
+end
+
+-- with both rows off the hook is a pass-through, whatever the player did
+setOpt("burn", false); setOpt("safe", false)
+runOnto(3, 4)
+T.check(roll() ~= nil, "with BURN and SAFE off a running step still meets Pokemon")
+T.eq(Runtime.call("encounter.roll", vanillaRoll, {},
+                  { mapId = "ROUTE_1", terrain = "water" }) ~= nil, true,
+  "water is never touched")
+
+-- SAFE GRASS: running through is quiet, walking through is not
+setOpt("safe", true)
+runOnto(3, 5)
+T.eq(roll(), nil, "SAFE GRASS: a running step meets nothing")
+walkOnto(3, 6)
+T.check(roll() ~= nil, "SAFE GRASS: walking is left exactly as it was")
+
+-- and the vanilla dice are still thrown on the suppressed step, so the
+-- stream every other roll draws from stays where vanilla left it
+local before = rolls
+runOnto(3, 7)
+roll()
+T.eq(rolls, before + 1, "a suppressed step still draws the vanilla roll")
+
+setOpt("safe", false)
+
+-- BURN GRASS: the cell you ran across is recorded, and stays recorded
+setOpt("burn", true)
+runOnto(8, 9)
+T.eq(roll(), nil, "BURN GRASS: the grass you just set alight holds nothing")
+local burnt = loader.modSave.running_shoes
+              and loader.modSave.running_shoes.burnt
+T.check(burnt and burnt.ROUTE_1 and burnt.ROUTE_1["8,9"] == true,
+  "the burnt cell is written into mod.save, so it survives a reload")
+
+-- walking back over it later is just as empty: the grass is gone, and it
+-- was not the running that emptied it
+walkOnto(8, 9)
+T.eq(roll(), nil, "a burnt cell stays empty when you walk back over it")
+
+-- a cell nobody ran across is untouched
+walkOnto(9, 9)
+T.check(roll() ~= nil, "walking onto unburnt grass is unchanged")
+T.check(not (burnt.ROUTE_1["9,9"]), "and walking does not burn anything")
+
+-- a row switched off is a row that does nothing: the burn is remembered,
+-- but the grass is grass again until BURN GRASS comes back on
+setOpt("burn", false)
+walkOnto(8, 9)
+T.check(roll() ~= nil, "with BURN GRASS off the burnt cell meets Pokemon again")
+T.check(burnt.ROUTE_1["8,9"] == true, "and the burn itself is remembered, not erased")
+setOpt("burn", true)
+T.eq(roll(), nil, "switching it back on returns the map you left")
+setOpt("burn", false)
+
+-- ------- 1.2.0: the trail
+--
+-- Screen-space, drawn through render.hud over the finished frame.  The
+-- stub's love.graphics.rectangle is swapped for a counter, which is the
+-- only observable a headless run has: these assert WHETHER it draws and
+-- on what condition, never what it looks like.
+
+local VIEWPORT = { width = 640, height = 576, gameX = 0, gameY = 0,
+                   gameWidth = 640, gameHeight = 576, scale = 4,
+                   dpiX = 1, dpiY = 1 }
+
+local drawn = 0
+local realRect = love.graphics.rectangle
+love.graphics.rectangle = function() drawn = drawn + 1 end
+
+local function hud()
+  drawn = 0
+  Runtime.call("render.hud", function() end, STUB, VIEWPORT)
+  return drawn
+end
+
+-- the anchor the overlay measures from is the player object the
+-- movement.speed hook is handed, so it needs the pixel fields a real
+-- Player carries
+local runner = { px = 48, py = 64, facing = "down", moving = true,
+                 stepFramesCur = nil }
+local function runTicks(n)
+  for _ = 1, n do Runtime.call("input.step", function() end, STUB, 1 / 60) end
+end
+
+setOpt("fx", "off")
+speed(WALK, ctx{ b = true, player = runner })
+runTicks(8)
+T.eq(hud(), 0, "RUN FX off draws nothing at all")
+
+setOpt("fx", "dust")
+speed(WALK, ctx{ b = true, player = runner })
+runTicks(8)
+T.check(hud() > 0, "RUN FX dust puts a trail on screen while running")
+
+-- standing still sheds no dust: the particles already out live their few
+-- frames and the trail empties itself
+runner.moving = false
+runTicks(40)
+T.eq(hud(), 0, "standing still, the trail expires and stops drawing")
+
+-- a scripted walk is not a run.  B is re-read every tick precisely so the
+-- flag left by the last manual step cannot trail the player through a
+-- cutscene, so with B released there is nothing to draw.
+local released = { data = Data, save = STUB.save, stack = STUB.stack,
+                   input = { isDown = function() return false end } }
+runner.moving = true
+speed(WALK, ctx{ b = true, player = runner })
+for _ = 1, 8 do Runtime.call("input.step", function() end, released, 1 / 60) end
+T.eq(hud(), 0, "with B released the trail stops, whatever the last step was")
+
+-- every kind draws, and none of them throws
+for _, kind in ipairs({ "dust", "fire", "bolt" }) do
+  setOpt("fx", kind)
+  runner.moving = true
+  speed(WALK, ctx{ b = true, player = runner })
+  runTicks(12)
+  T.check(hud() > 0, "RUN FX " .. kind .. " draws")
+end
+
+-- tilt projects the world through a perspective mesh, which a screen-space
+-- overlay cannot follow; it stands down rather than drawing the trail
+-- somewhere the player is not
+STUB.save.options.tilt = 35
+T.eq(hud(), 0, "the overlay stands down while tilt owns the world pass")
+STUB.save.options.tilt = 0
+
+-- the trail belongs to the map it was shed on
+runner.moving = true
+speed(WALK, ctx{ b = true, player = runner })
+runTicks(12)
+Runtime.emit("map.exited", { mapId = "ROUTE_1" })
+T.eq(hud(), 0, "leaving the map clears the trail")
+
+-- ------- the scorch marks
+--
+-- Drawn by the same overlay, from the cells mod.save recorded, and only
+-- while BURN GRASS is on: switching the row off puts the map back the way
+-- the engine draws it without touching what was burnt.
+
+setOpt("fx", "off")
+WORLD.player.cellX, WORLD.player.cellY = 9, 9   -- next to the burnt 8,9
+T.eq(hud(), 0, "with BURN GRASS off a burnt cell draws nothing")
+setOpt("burn", true)
+T.check(hud() > 0, "a burnt cell within view is scorched over the frame")
+
+-- the cell underfoot is skipped: this draws OVER the finished frame, so a
+-- patch on the player's own tile would char the player too
+WORLD.player.cellX, WORLD.player.cellY = 8, 9
+T.eq(hud(), 0, "standing on the burnt cell, nothing is drawn over you")
+
+-- and a burn half a region away is never walked over by the draw loop
+WORLD.player.cellX, WORLD.player.cellY = 90, 90
+T.eq(hud(), 0, "a burnt cell far off screen costs no draws")
+setOpt("burn", false)
+
+love.graphics.rectangle = realRect
+loader.game = nil
 
 run.release()
 T.finish("running_shoes")

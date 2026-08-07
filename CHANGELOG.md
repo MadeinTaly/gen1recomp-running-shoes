@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.2.0
+
+- **New: `RUN FX` — a trail behind you while you run.** `OFF` / **`DUST`** /
+  `FLAMES` / `BOLTS`, on the mod's own options page. It is drawn over the
+  finished frame and changes nothing else: no tile, no flag, and — because
+  it runs its own little generator rather than borrowing the game's — not
+  one draw of the RNG that decides encounters and battles.
+
+  `DUST` is the default, because dust is the one a pair of shoes could
+  actually account for. `OFF` is the top of the same row for anyone who
+  wants 1.1.0's picture back.
+
+- **New: `BURN GRASS` (off).** Tall grass you *run* across is scorched, and
+  scorched grass holds no Pokémon — walking over it later is just as empty.
+  Burnt cells are written to `mod.save`, so a burnt route is still burnt
+  after a save and a reload. Walking through grass never burns it.
+
+  Switching the row off puts the map back the way the engine draws it and
+  gives the grass its Pokémon back; the burns are remembered rather than
+  erased, so switching it on again returns the map you left.
+
+- **New: `SAFE GRASS` (off).** Running through tall grass never starts a
+  wild battle. Walking through it is untouched, so the grass is still
+  dangerous — you just have a way past it.
+
+  Both of these suppress the battle by throwing the vanilla dice first and
+  discarding the answer, so a suppressed step draws from the RNG exactly
+  what a vanilla step would have drawn.
+
+- The trail is screen-space, and it stands down rather than drawing in the
+  wrong place when something else owns the camera: tilt mode, or a mod's
+  render pipeline that replaces the world pass.
+
 ## 1.1.0
 
 - **Fixed: cutscenes ran at running speed.** When an NPC escorts you

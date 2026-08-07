@@ -9,9 +9,13 @@ return {
     added = {
       "holding B shortens a step, at a multiplier you choose: x1.5, x2, x3 or x4",
       "BOOST BIKE and BOOST SURF, both off by default",
+      "RUN FX: a trail off your heels while you run -- off, dust, flames or bolts",
+      "BURN GRASS (off): tall grass you RUN across is scorched, and scorched grass holds no Pokemon",
+      "SAFE GRASS (off): running through tall grass never starts a wild battle",
     },
     changed = {
-      "nothing but the duration of a step: a tile still costs a tile, and collision, triggers and the animation are untouched",
+      "with the three new rows left alone, nothing but the duration of a step: a tile still costs a tile, and collision, triggers and the animation are untouched",
+      "BURN GRASS writes the burnt cells into mod.save, so a burnt route is still burnt after a reload -- and switching the row off puts the map back, burns remembered rather than erased",
     },
     known = {
       "x2 is exactly the bicycle's own 8 frames, so at that setting your shoes have caught up with a vehicle -- this is a fact about Gen 1's bicycle, not a bug in the shoes",
@@ -19,6 +23,9 @@ return {
       "it calls the next handler first and multiplies the answer, so a mod that slows you down in a swamp keeps its say",
       "no sprint animation: the legs move at walking cadence, just over less ground-time -- Gen 1 has no running frames to draw",
       "scripted walks stay at the engine's own speed: a step's duration lives on the player and a cutscene's steps do not ask the hook, so until 1.1.0 an escort NPC and the player walked at different speeds and the player arrived ahead of the dialogue",
+      "the trail draws over the finished frame in true colour, so in the monochrome display modes it is the one thing on screen that is not a Game Boy shade",
+      "it stands down entirely while tilt mode or a world-replacing render pipeline owns the camera: a screen-space overlay cannot follow either, and drawing anyway would put the trail where the player is not",
+      "a suppressed encounter still throws the vanilla dice and discards them, so the RNG stream stays where the engine left it -- only the battle is missing",
     },
   },
 }

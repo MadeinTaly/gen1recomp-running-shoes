@@ -1,7 +1,7 @@
 {
   "id": "running_shoes",
   "name": "Running Shoes",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -12,6 +12,6 @@
   "optional_dependencies": [],
   "conflicts": [],
   "permissions": [],
-  "description": "Hold B to walk faster, at a speed you pick: x1.5, x2, x3 or x4. Rides the engine's own movement.speed hook, whose comment names running shoes as the reason it exists. Optional boosts for the bicycle and for surfing, both off by default. Nothing but the duration of a step changes.",
+  "description": "Hold B to walk faster, at a speed you pick: x1.5, x2, x3 or x4. Rides the engine's own movement.speed hook, whose comment names running shoes as the reason it exists. A run can leave a trail behind you -- dust, flames or lightning -- and, if you switch them on, scorch the tall grass it crosses or run through it without meeting anything. Optional boosts for the bicycle and for surfing. Everything past the speed itself is a row you turn on.",
   "github": "MadeinTaly/gen1recomp-running-shoes"
 }

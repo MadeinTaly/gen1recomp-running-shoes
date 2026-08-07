@@ -28,6 +28,46 @@ Hold **B** while walking. That is the whole interface.
 | `RUN SPEED` | x1.5 / **x2** / x3 / x4 | how much shorter a step gets |
 | `BOOST BIKE` | off | whether the bicycle gets it too |
 | `BOOST SURF` | off | whether surfing does |
+| `RUN FX` | off / **dust** / flames / bolts | what a run leaves behind you |
+| `BURN GRASS` | off | running across tall grass scorches it |
+| `SAFE GRASS` | off | running through tall grass meets nothing |
+
+## The three extras
+
+**`RUN FX`** draws a trail off your heels while you hold B. Dust is the
+default, because dust is the one a pair of shoes could actually account
+for; flames and lightning are there because you asked, and they are honest
+about being decoration. It is drawn over the finished frame and changes
+nothing underneath it — no tile, no flag, and not one draw of the random
+number generator that decides encounters and battles. It has its own tiny
+generator for exactly that reason: a spark that moved the game's dice would
+be a spark you could see in a battle log.
+
+Two places it stands down rather than draw in the wrong spot: **tilt mode**,
+and a mod's **render pipeline** that replaces the world pass. Both move the
+camera in ways a screen-space overlay cannot follow, so it waits them out.
+
+**`BURN GRASS`** scorches the tall grass you *run* across — walking never
+burns anything — and scorched grass holds no Pokémon. Walk back over it a
+week later and it is still empty, because the burnt cells are written into
+`mod.save` and travel with your save file. The scorch itself is drawn over
+the tile as charred stubble, so the cell underfoot is skipped: a solid
+patch on your own tile would char you along with the grass.
+
+Switching the row back **off** puts the map back exactly as the engine
+draws it and gives the grass its Pokémon back — a row you turned off is a
+row that does nothing, and nobody should be stuck with a scarred save and
+no way out of it. What burnt is remembered rather than erased, so turning
+it on again returns the map you actually left.
+
+**`SAFE GRASS`** is the smaller version of the same idea with nothing
+permanent about it: while you are running, tall grass never starts a wild
+battle. Walk and it is as dangerous as it ever was.
+
+Both suppress the battle by throwing the vanilla dice first and *discarding*
+the answer, so a suppressed step draws from the RNG exactly what a vanilla
+step would have drawn. Only the battle is missing; the stream underneath it
+is where the engine left it.
 
 ## The numbers, since you asked
 
@@ -66,13 +106,19 @@ hurry.
 **There is no running animation.** Gen 1 does not have one — there were no
 sprint frames to draw, because nobody in 1996 had thought of it. Your legs
 keep the walking cadence and simply spend less time on each tile. It reads
-as a brisk walk, which is historically accurate and slightly funny.
+as a brisk walk, which is historically accurate and slightly funny. `RUN FX`
+is a trail, not a sprint cycle: the sprite is still the sprite.
 
-**It changes nothing but the duration of a step.** A tile still costs a
-tile. Collision, encounters, triggers, ledges, warps and the step itself
-are untouched, so the world has no idea how fast you crossed it. Grass does
-not become less dangerous because you hurried through it, and no, this is
-not an encounter-rate mod.
+**Out of the box it changes nothing but the duration of a step.** A tile
+still costs a tile. Collision, encounters, triggers, ledges, warps and the
+step itself are untouched, so the world has no idea how fast you crossed
+it. Grass does not become less dangerous because you hurried through it —
+unless you go and switch `BURN GRASS` or `SAFE GRASS` on, which is a
+deliberate two-button trip through the options page and says so on the row.
+
+**It is still not an encounter-rate mod.** `SAFE GRASS` does not lower a
+rate; it declines the battle outright while you are running, and leaves
+walking exactly as it was.
 
 **It plays well with others.** The hook calls the next handler first and
 multiplies whatever comes back, so a mod that slows you down in a swamp
