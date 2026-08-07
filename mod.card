@@ -9,8 +9,8 @@ return {
     added = {
       "holding B shortens a step, at a multiplier you choose: x1.5, x2, x3 or x4",
       "BOOST BIKE and BOOST SURF, both off by default",
-      "RUN FX: a trail off your heels while you run -- off, dust, flames or bolts; the engine's own dust puff is the anchor and the coloured particles ride on top",
-      "BURN GRASS (off): tall grass you RUN across is really CUT -- the same block swap OverworldState:tryCut makes -- one clod at a time, so the tile stops being grass and the engine stops rolling encounters on it by itself",
+      "RUN FX: a trail off your heels while you run -- off, smoke, flames or bolts -- reaching about three and a half cells back and fading the whole way out",
+      "BURN GRASS (off): tall grass you RUN across is really CUT, one clod at a time, following every cell of your path -- the tile stops being grass, so the engine stops rolling encounters on it by itself",
       "SAFE GRASS (off): running through tall grass never starts a wild battle",
     },
     changed = {

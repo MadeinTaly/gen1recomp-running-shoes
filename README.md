@@ -29,25 +29,31 @@ Hold **B** while walking. That is the whole interface.
 | `BOOST BIKE` | off | whether the bicycle gets it too |
 | `BOOST SURF` | off | whether surfing does |
 | `RUN FX` | off / **dust** / flames / bolts | what a run leaves behind you |
+
 | `BURN GRASS` | off | running across tall grass scorches it |
 | `SAFE GRASS` | off | running through tall grass meets nothing |
 
 ## The three extras
 
-**`RUN FX`** leaves a trail off your heels while you hold B, in two layers.
+**`RUN FX`** leaves a trail off your heels while you hold B, reaching about
+**three and a half cells back** and fading the whole way out.
 
-The anchor is the **engine's own dust puff** — `startDustAnim`, the same
-animation Cut leaves on grass — dropped on the cell you have just left.
-That is drawn in the world pass, at the right place under every camera the
-engine has, so it cannot be in the wrong spot and cannot fail to appear.
+| | |
+| --- | --- |
+| `DUST` | smoke — greys, no hard edge, and it **expands** as it thins, the way smoke does. The engine's own dust puff anchors the first cell. |
+| `FLAMES` | orange at the heel, **red** through the middle, ember at the end, shrinking as it dies down. |
+| `BOLTS` | a white-hot core cooling through **yellow** into amber, lit on alternate ticks so it crackles rather than glows. |
 
-On top of it, coloured particles give dust, flames and bolts their
-different looks. Those are drawn over the finished frame through
-`render.hud`. They change nothing underneath — no tile, no flag, and not
-one draw of the random number generator that decides encounters and
-battles. The trail has its own tiny generator for exactly that reason: a
-spark that moved the game's dice would be a spark you could see in a battle
-log.
+The length is measured in **cells of ground, not frames**, because frames
+are not a length: a step is 8 frames at x2 and 4 at x4, so a fixed lifetime
+would draw a trail twice as long at half the speed. Particles are left in
+world space and you run away from them, so the lifetime comes off the step
+duration and the trail stays the same length on the ground at every setting.
+
+Nothing underneath changes — no tile, no flag, and not one draw of the
+random number generator that decides encounters and battles. The trail has
+its own tiny generator for exactly that reason: a spark that moved the
+game's dice would be a spark you could see in a battle log.
 
 Two places the coloured layer stands down rather than draw in the wrong
 spot: **tilt mode**, and a mod's **render pipeline** that replaces the
@@ -72,12 +78,21 @@ grass is genuinely gone — gone from the picture, and gone from
 gates on. There is no suppression and no overlay: the tile simply is not
 tall grass any more.
 
-One improvement on the engine's own Cut. A block is 2×2 cells, so swapping
-it whole would take four tiles for one footstep. Instead this assembles a
-block that is the current block everywhere **except** the one cell's 2×2
-tile quadrant, which comes from the cut one — **a cut exactly one clod
-wide, the size of your character**, built only from tile ids the tileset
-already contains. No art is invented and nothing ROM-derived is shipped.
+Two improvements on the engine's own Cut.
+
+A block is 2×2 cells, so swapping it whole would take four tiles for one
+footstep. Instead this rebuilds the block with the grass taken out of **one
+cell's 2×2 tile quadrant** — a cut exactly one clod wide, the size of your
+character, built only from tile ids the tileset already contains. No art is
+invented and nothing ROM-derived is shipped.
+
+And the swap table is read for *which tile the grass becomes*, not for
+which blocks are allowed to be cut. That table only names the blocks CUT
+was ever meant to be used on, so matching whole blocks against it left
+holes wherever you ran across a grass block it had never heard of. Comparing
+one before/after pair tile by tile gives the ground the grass was standing
+on, and with that single tile id **every** cell you run over is cut, so the
+path is unbroken.
 
 What you cut is written into `mod.save` and travels with your save file, so
 entering the map again re-applies it.

@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.4.0
+
+- **The cut now follows the player, with no holes in it.** 1.3.0 matched a
+  grass block against `field.cutTreeSwaps` by **block id**, and that table
+  only names the specific blocks CUT was ever meant to be used on. Run
+  across any other grass block and there was no pair to take tiles from, so
+  nothing happened — which is why the cut skipped cells and broke up along
+  the path.
+
+  The swap table is now read for one thing instead: **which tile the grass
+  becomes**. Compare any before/after pair tile by tile, and wherever the
+  before is grass and the after is not, the after is the ground the grass
+  was standing on. With that single tile id, *any* grass block can be cut,
+  one cell at a time — so every cell you run over is cut and the trail is
+  unbroken. (If a dataset has no swaps at all, it falls back to the most
+  common walkable tile in the tileset, which outdoors is that same ground.)
+
+- **The trail now reaches about three and a half cells back**, and fades
+  the whole way out instead of stopping.
+
+  Its length is measured in **cells of ground, not frames** — because
+  frames are not a length. A step is 8 frames at x2 and 4 at x4, so a fixed
+  lifetime draws a trail twice as long at half the speed. Particles are
+  left in world space and the player runs away from them, so the lifetime
+  is now derived from the step duration and the length on the ground stays
+  put. Measured in the suite at both speeds.
+
+  Particles also barely drift now. A trail is something *left behind*;
+  pushing it backwards as well made the far end chase the player, which is
+  what kept the old one hugging his heels.
+
+- **Colours, and what each one does.**
+  - `FLAMES` — orange at the heel, **red** through the middle, ember at the
+    end, and it shrinks as it dies down.
+  - `BOLTS` — a white-hot core cooling through **yellow** into amber, still
+    lit on alternate ticks so it crackles rather than glows.
+  - `DUST` is **smoke**: greys, no hard black edge, and it *expands* as it
+    thins, which is the difference between smoke and a row of shrinking
+    dots. The engine's own dust puff still anchors the first cell for this
+    one only — a grey puff under a red flame made the fire look like it was
+    smoking.
+
+- Two particles a tick now, spread across the width of the cell, so the
+  trail is a band with texture in it rather than a dotted line.
+
 ## 1.3.0
 
 - **`BURN GRASS` now really cuts the grass.** 1.2.x drew a dark patch over

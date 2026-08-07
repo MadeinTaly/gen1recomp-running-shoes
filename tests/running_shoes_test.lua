@@ -338,10 +338,14 @@ local function blockOf(tile)
 end
 
 -- block 0 is grass in all four of its cells, which is what makes the
--- one-clod claim testable: cut one cell and three must still be grass
+-- one-clod claim testable: cut one cell and three must still be grass.
+-- Block 2 is ALSO grass and is deliberately absent from the swap table
+-- below -- the real tileset is full of grass blocks CUT was never meant
+-- to be used on, and matching swaps by block id is what left holes in the
+-- player's path.
 local TILESET = {
   id = "OVERWORLD",
-  blocks = { blockOf(GRASS), blockOf(GROUND) },
+  blocks = { blockOf(GRASS), blockOf(GROUND), blockOf(GRASS) },
   walkable = { GRASS, GROUND },
   grassTile = GRASS,
   doorTiles = {}, warpTiles = {},
@@ -349,10 +353,10 @@ local TILESET = {
 
 local rebuilds = 0
 
-local function freshMap()
-  local def = { id = "ROUTE_1", width = 3, height = 3, tileset = "OVERWORLD",
+local function freshMap(blockId)
+  local def = { id = "ROUTE_1", width = 4, height = 4, tileset = "OVERWORLD",
                 borderBlock = 0, blocks = {}, warps = {}, signs = {} }
-  for i = 1, def.width * def.height do def.blocks[i] = 0 end
+  for i = 1, def.width * def.height do def.blocks[i] = blockId or 0 end
   local map = Map.new(def, TILESET)
   map.renderer = { rebuild = function() rebuilds = rebuilds + 1 end }
   return map
@@ -446,6 +450,42 @@ T.check(not MAP:isGrassCell(2, 3), "entering the map re-applies the cut")
 T.check(not MAP:isGrassCell(3, 3), "both cut cells come back")
 T.check(MAP:isGrassCell(2, 2), "and the cells that were never cut are still grass")
 
+-- ------- the cut has to FOLLOW the player, with no holes in it
+--
+-- Two ways the trail used to break, both fixed by taking one tile id out
+-- of the swap table instead of matching whole blocks against it.
+
+-- 1. a grass block the swap table has never heard of still cuts
+MAP = freshMap(2)                        -- block 2: grass, and not in the swaps
+OW = overworldOn(MAP)
+STUB.stack.states = { OW }
+STUB.overworld = OW
+setOpt("burn", true)
+T.check(MAP:isGrassCell(1, 1), "the unlisted grass block starts as grass")
+stepOnto(1, 1, true)
+T.check(not MAP:isGrassCell(1, 1),
+  "a grass block absent from the swap table is cut all the same")
+T.eq(MAP:cellTile(1, 1), GROUND, "and it is cut to the same ground tile")
+
+-- 2. every cell of a run is cut, so the path is unbroken
+MAP = freshMap(2)
+OW = overworldOn(MAP)
+STUB.stack.states = { OW }
+STUB.overworld = OW
+runner.facing = "right"
+for cx = 0, 5 do stepOnto(cx, 2, true) end
+local holes = 0
+for cx = 0, 5 do
+  if MAP:isGrassCell(cx, 2) then holes = holes + 1 end
+end
+T.eq(holes, 0, "running six cells cuts all six: the path has no holes in it")
+-- and only that row: the run was one cell wide
+T.check(MAP:isGrassCell(0, 3) and MAP:isGrassCell(5, 3),
+  "the row beside the path is untouched")
+T.check(MAP:isGrassCell(0, 1) and MAP:isGrassCell(5, 1),
+  "and so is the row above it")
+runner.facing = "down"
+
 -- the puff behind a running player is the engine's own dust animation,
 -- placed on the cell just vacated rather than the one being landed on.
 -- BURN GRASS goes off first: a cut leaves its own puff on the cell it
@@ -483,14 +523,27 @@ local VIEWPORT = { width = 640, height = 576, gameX = 0, gameY = 0,
                    gameWidth = 640, gameHeight = 576, scale = 4,
                    dpiX = 1, dpiY = 1 }
 
-local drawn = 0
+local drawn, minX, maxX = 0, nil, nil
 local realRect = love.graphics.rectangle
-love.graphics.rectangle = function() drawn = drawn + 1 end
+love.graphics.rectangle = function(_, x)
+  drawn = drawn + 1
+  if type(x) == "number" then
+    if not minX or x < minX then minX = x end
+    if not maxX or x > maxX then maxX = x end
+  end
+end
 
 local function hud()
-  drawn = 0
+  drawn, minX, maxX = 0, nil, nil
   Runtime.call("render.hud", function() end, STUB, VIEWPORT)
   return drawn
+end
+
+-- How far the trail reaches, in CELLS of ground.  VIEWPORT is scale 4 at
+-- dpi 1, so one world pixel is 4 screen pixels and a cell is 64 of them.
+local function trailCells()
+  if not (minX and maxX) then return 0 end
+  return (maxX - minX) / (16 * VIEWPORT.scale)
 end
 
 -- the anchor the overlay measures from is the player object the
@@ -536,6 +589,59 @@ for _, kind in ipairs({ "dust", "fire", "bolt" }) do
   runTicks(12)
   T.check(hud() > 0, "RUN FX " .. kind .. " draws")
 end
+
+-- ------- how far back the trail actually reaches
+--
+-- The asked-for shape: at least three cells of ground behind the player,
+-- fading out rather than stopping.  A trail is made of particles left in
+-- world space that the player runs away from, so its length is speed times
+-- lifetime -- which means the lifetime has to be derived from the step
+-- duration, or the same mod draws a trail twice as long at half the speed.
+--
+-- These run the player across the map a world pixel at a time, the way
+-- Player:update does, and then measure the spread of what reaches
+-- love.graphics.  It is the one assertion here that is about how the thing
+-- LOOKS, and it is measured rather than eyeballed.
+
+local function runAcross(ticks)
+  Runtime.emit("map.exited", {})            -- start from an empty trail
+  runner.facing, runner.moving = "right", true
+  runner.px, runner.py = 0, 0
+  -- One manual step, which is what tells the mod how long a step is; the
+  -- trail's lifetime is read off the answer.  That answer is also how fast
+  -- the player then travels -- a 16-pixel cell in `sped` ticks -- so the
+  -- walk it was derived from is not what moves him.
+  local sped = speed(WALK, ctx{ b = true, player = runner })
+  for _ = 1, ticks do
+    runner.px = runner.px + 16 / sped
+    Runtime.call("input.step", function() end, STUB, 1 / 60)
+  end
+  return sped
+end
+
+setOpt("fx", "fire")
+
+-- x2: a 16-frame walk becomes an 8-frame step
+setOpt("speed", "2")
+T.eq(runAcross(40), BIKE, "the x2 run under test really is an 8-frame step")
+hud()
+local slow = trailCells()
+T.check(slow >= 3,
+  ("the trail reaches at least three cells back (got %.1f)"):format(slow))
+
+-- x4 halves the step again, and the trail must still be about as long ON
+-- THE GROUND.  This is the assertion a fixed frame count fails: the same
+-- lifetime at twice the speed draws twice the trail.
+setOpt("speed", "4")
+T.eq(runAcross(40), 4, "the x4 run under test really is a 4-frame step")
+hud()
+local fast = trailCells()
+T.check(fast >= 3,
+  ("at x4 it still reaches three cells back (got %.1f)"):format(fast))
+T.check(math.abs(fast - slow) <= 3,
+  ("and the two speeds leave a comparable trail (%.1f vs %.1f cells)")
+    :format(slow, fast))
+setOpt("speed", "2")
 
 -- ------- and through the engine's OWN draw path
 --

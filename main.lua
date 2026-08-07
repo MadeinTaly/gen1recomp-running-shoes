@@ -120,7 +120,7 @@ local MIN_FRAMES = 4     -- see "the floor" above
 
 -- ------- the trail
 
-local TRAIL_MAX = 64     -- hard ceiling on live particles; a strobe of them
+local TRAIL_MAX = 128    -- hard ceiling on live particles; a strobe of them
                          -- is a frame cost, not an effect
 
 local DIRV = { up = { 0, -1 }, down = { 0, 1 },
@@ -129,13 +129,16 @@ local DIRV = { up = { 0, -1 }, down = { 0, 1 },
 -- Three shades each, oldest last, because three shades is what a Game Boy
 -- sprite had and a smooth gradient would read as somebody else's engine.
 --
--- Dust is a warm brown rather than the pale grey a first pass reached for:
--- pale grey at half opacity over Route 1's light green is a rumour, not an
--- effect. Everything here is picked to survive being drawn over grass.
+-- Smoke greys, fire reds, lightning yellows -- and none of them pale,
+-- because a pale anything at half opacity over Route 1's green is a rumour
+-- rather than an effect.
 local SHADES = {
-  dust = { { 0.72, 0.60, 0.42 }, { 0.55, 0.44, 0.30 }, { 0.36, 0.29, 0.20 } },
-  fire = { { 1.00, 0.90, 0.30 }, { 0.98, 0.45, 0.05 }, { 0.72, 0.10, 0.04 } },
-  bolt = { { 1.00, 1.00, 1.00 }, { 0.45, 0.85, 1.00 }, { 0.15, 0.35, 0.95 } },
+  -- smoke: light where it leaves the ground, darkening as it thins out
+  dust = { { 0.88, 0.88, 0.86 }, { 0.60, 0.60, 0.58 }, { 0.34, 0.34, 0.33 } },
+  -- fire: orange at the heel, red through the middle, ember at the end
+  fire = { { 1.00, 0.55, 0.12 }, { 0.92, 0.16, 0.07 }, { 0.48, 0.05, 0.03 } },
+  -- lightning: a white-hot core cooling through yellow into amber
+  bolt = { { 1.00, 1.00, 0.88 }, { 1.00, 0.88, 0.15 }, { 0.80, 0.55, 0.04 } },
 }
 
 -- Every particle gets a one-pixel black skirt underneath it, the way a GB
@@ -143,11 +146,24 @@ local SHADES = {
 -- has no edge and reads as a glitch rather than as a thing.
 local OUTLINE = { 0.05, 0.04, 0.04 }
 
-local LIFE = { dust = 26, fire = 22, bolt = 10 }
+-- ------- how long a trail is
+--
+-- Measured in CELLS OF GROUND rather than in frames, because frames are
+-- not a length: a step is 8 frames at x2 and 4 at x4, so a fixed lifetime
+-- would draw a trail twice as long at half the speed. Particles are left
+-- in world space and the player runs away from them, so the trail's length
+-- is the player's speed times the lifetime -- and pinning the length means
+-- deriving the lifetime from the step duration instead of guessing it.
+--
+-- Three and a half cells: three clear ones behind the player and the tail
+-- of a fourth going out, so the far end fades rather than stops.
+local TRAIL_CELLS = 3.5
+local LIFE_MIN, LIFE_MAX = 24, 96
 
--- one particle every N logic ticks while running; bolts are rarer because
--- lightning that arrives continuously is a light bulb
-local CADENCE = { dust = 1, fire = 1, bolt = 2 }
+-- particles per logic tick while running.  Two, side by side across the
+-- width of the cell, so the trail is a band with texture in it rather than
+-- a dotted line down the middle.
+local PER_TICK = 2
 
 -- How long the engine's own dust puff is held behind a running player.
 -- `startDustAnim` hands out 32 frames, which is right for a boulder being
@@ -300,52 +316,92 @@ return function(mod)
   --
   -- One thing has to be better than the engine's own Cut, though, because
   -- of what was asked for: a block is 2x2 cells, so swapping it whole would
-  -- cut four tiles for one footstep. So rather than write `after` directly,
-  -- this builds a block that is `before` everywhere EXCEPT the 2x2 tile
-  -- quadrant belonging to the one cell being cut, which it takes from
-  -- `after`. That is a cut exactly one cell wide -- the size of the clod
-  -- the player ran over -- assembled entirely from tile ids the tileset
-  -- already contains. Nothing is drawn and no art is invented.
+  -- cut four tiles for one footstep.
+  --
+  -- And matching a swap by BLOCK ID has a second problem, which is why the
+  -- cut used to skip cells and leave holes down the player's path: the
+  -- swap table only names the specific blocks CUT was ever meant to be
+  -- used on. Run across a grass block that is not in it and there was no
+  -- pair to take tiles from, so nothing happened and the trail broke.
+  --
+  -- So the swap table is read for ONE thing instead: which tile the grass
+  -- becomes. Compare any before/after pair tile by tile, and wherever the
+  -- before is grass and the after is not, the after is the ground the
+  -- grass was standing on. With that single tile id, ANY block can be cut,
+  -- one cell at a time, by replacing just that cell's grass tiles -- so
+  -- every cell the player runs over is cut and the trail is unbroken.
 
   local GRASS_TILE = 0x52     -- $52, the OVERWORLD tall-grass tile (tryCut)
   local GRASS_TILESET = "OVERWORLD"
 
-  -- synthesized block id -> the fully-cut block it was derived from, so a
-  -- SECOND cut in the same block still knows where to take its tiles from
-  local derivedFrom = {}
   local synthesized = {}
+  local cutTileFor = {}
 
-  local function swapFor(data, block)
-    local swaps = data and data.field and data.field.cutTreeSwaps
-    for _, sw in ipairs(swaps or {}) do
-      if sw.before == block then return sw.after end
+  -- The tile tall grass leaves behind, learned from the engine's own swap
+  -- table rather than guessed. Falls back to the most common walkable tile
+  -- in the tileset, which on an outdoor tileset is the plain ground the
+  -- grass sits on, so a dataset with no swaps at all still cuts.
+  local function cutTile(data, tileset)
+    local known = cutTileFor[tileset]
+    if known ~= nil then return known or nil end
+    local votes, best, bestN = {}, nil, 0
+    for _, sw in ipairs(data and data.field and data.field.cutTreeSwaps or {}) do
+      local src, dst = tileset.blocks[sw.before + 1], tileset.blocks[sw.after + 1]
+      if type(src) == "table" and type(dst) == "table" then
+        for i = 1, 16 do
+          if src[i] == GRASS_TILE and dst[i] ~= GRASS_TILE then
+            votes[dst[i]] = (votes[dst[i]] or 0) + 1
+          end
+        end
+      end
     end
-    return derivedFrom[block]
+    for tile, n in pairs(votes) do
+      if n > bestN then best, bestN = tile, n end
+    end
+    if not best then
+      local walkable, counts = {}, {}
+      for _, t in ipairs(tileset.walkable or {}) do walkable[t] = true end
+      for _, block in ipairs(tileset.blocks or {}) do
+        for i = 1, 16 do
+          local t = block[i]
+          if walkable[t] and t ~= GRASS_TILE then
+            counts[t] = (counts[t] or 0) + 1
+            if counts[t] > bestN then best, bestN = t, counts[t] end
+          end
+        end
+      end
+    end
+    cutTileFor[tileset] = best or false
+    return best
   end
 
-  -- `before` with one cell's four tiles taken from `after`, appended to the
-  -- tileset's own block list and cached. Tilesets are shared tables --
-  -- Map.new binds tilesetDef by reference -- so an appended block is
-  -- visible to every map drawn from that tileset, and Map:tileAt reads the
-  -- list live.
-  local function cutBlock(tileset, before, after, qx, qy)
-    local key = before .. ":" .. after .. ":" .. qx .. "," .. qy
+  -- `block` with the grass taken out of ONE cell's 2x2 tile quadrant,
+  -- appended to the tileset's own block list and cached. Tilesets are
+  -- shared tables -- Map.new binds tilesetDef by reference -- so an
+  -- appended block is visible to every map drawn from that tileset, and
+  -- Map:tileAt reads the list live. Returns nil when that cell had no
+  -- grass in it, which is the honest answer to "cut what?".
+  local function cutBlock(tileset, block, qx, qy, tile)
+    local key = block .. ":" .. qx .. "," .. qy
     local cached = synthesized[key]
     if cached then return cached end
-    local src, dst = tileset.blocks[before + 1], tileset.blocks[after + 1]
-    if type(src) ~= "table" or type(dst) ~= "table" then return nil end
-    local out = {}
+    local src = tileset.blocks[block + 1]
+    if type(src) ~= "table" then return nil end
+    local out, changed = {}, false
     for i = 1, 16 do out[i] = src[i] end
     for j = 0, 1 do
       for i = 0, 1 do
         local idx = (qy + j) * 4 + (qx + i) + 1
-        out[idx] = dst[idx]
+        if out[idx] == GRASS_TILE then
+          out[idx] = tile
+          changed = true
+        end
       end
     end
+    if not changed then return nil end
     tileset.blocks[#tileset.blocks + 1] = out
     local id = #tileset.blocks - 1
     synthesized[key] = id
-    derivedFrom[id] = after
     return id
   end
 
@@ -361,14 +417,13 @@ return function(mod)
     if map.def.tileset ~= GRASS_TILESET then return false end
     if map.cellTile and map:cellTile(cx, cy) ~= GRASS_TILE then return false end
 
-    local bx, by = math.floor(cx / 2), math.floor(cy / 2)
-    local before = map:blockAt(bx, by)
-    local after = swapFor(game.data, before)
-    if not after then return false end
+    local tile = cutTile(game.data, map.tileset)
+    if not tile then return false end
 
+    local bx, by = math.floor(cx / 2), math.floor(cy / 2)
     -- which 2x2 tile quadrant of the block this cell is
     local qx, qy = (cx % 2) * 2, (cy % 2) * 2
-    local id = cutBlock(map.tileset, before, after, qx, qy)
+    local id = cutBlock(map.tileset, map:blockAt(bx, by), qx, qy, tile)
     if not id then return false end
 
     local ok = mod.world and mod.world:replaceBlock(bx, by, id)
@@ -393,22 +448,38 @@ return function(mod)
     for i = #particles, 1, -1 do particles[i] = nil end
   end
 
+  -- How long a particle has to live for the trail to reach TRAIL_CELLS
+  -- back. A step covers one cell in `frames` ticks, so a particle standing
+  -- still in the world is that many ticks behind per cell.
+  local function lifeSpan()
+    local frames = ourFrames or 8
+    local life = math.floor(TRAIL_CELLS * frames + 0.5)
+    if life < LIFE_MIN then life = LIFE_MIN end
+    if life > LIFE_MAX then life = LIFE_MAX end
+    return life
+  end
+
   local function emit(kind, player)
     if #particles >= TRAIL_MAX then return end
     if not (player.px and player.py) then return end
     local d = DIRV[player.facing] or DIRV.down
-    -- `px`,`py` is the top-left of the 16x16 cell the player stands in, so
-    -- +8/+12 is roughly where the feet are; the trail leaves from behind
-    -- them, which is the direction of travel negated
-    local life = LIFE[kind] or 20
+    -- Across the direction of travel, so the two particles a tick spread
+    -- over the width of the cell instead of stacking on one line.
+    local ax, ay = -d[2], d[1]
+    local spread = rnd() * 10 - 5
+    local life = lifeSpan()
     particles[#particles + 1] = {
       kind = kind,
-      x = player.px + 8 - d[1] * 8 + (rnd() * 6 - 3),
-      y = player.py + 12 - d[2] * 8 + (rnd() * 4 - 2),
-      -- drift backwards along the travel axis and upward: the trail falls
-      -- behind and rises, the way anything shed at speed does
-      vx = -d[1] * 0.35 + (rnd() * 0.30 - 0.15),
-      vy = -d[2] * 0.35 - (kind == "fire" and 0.30 or 0.16),
+      -- `px`,`py` is the top-left of the 16x16 cell, so +8/+12 is about
+      -- where the feet are
+      x = player.px + 8 + ax * spread + (rnd() * 3 - 1.5),
+      y = player.py + 12 + ay * spread + (rnd() * 3 - 1.5),
+      -- Barely any drift: a trail is something LEFT BEHIND, so it stays
+      -- where it was shed and the player runs away from it. Give it a push
+      -- backwards as well and the far end races the player, which is what
+      -- kept the old trail hugging his heels instead of stretching out.
+      vx = (rnd() * 0.16 - 0.08),
+      vy = -(kind == "fire" and 0.22 or 0.10) + (rnd() * 0.10 - 0.05),
       life = life, max = life,
     }
   end
@@ -440,12 +511,21 @@ return function(mod)
     return set[3]
   end
 
+  -- Progressive, and in the direction each thing actually goes.
+  --
+  -- Smoke EXPANDS as it thins: it leaves the ground tight and spreads as it
+  -- rises, and fading a growing puff is what separates smoke from a row of
+  -- shrinking dots. Fire does the opposite -- a flame is biggest where it
+  -- is fed and dies down to an ember. Lightning does neither; it is a line
+  -- with a width, and the width is two.
   local function sizeOf(kind, p)
     if kind == "bolt" then return 2 end
-    local t = p.life / p.max
-    if t > 0.6 then return kind == "fire" and 5 or 4 end
-    if t > 0.3 then return 3 end
-    return 2
+    local t = p.life / p.max          -- 1 fresh, 0 gone
+    if kind == "fire" then
+      local size = 1 + math.floor(t * 5)
+      return size > 5 and 5 or size
+    end
+    return 2 + math.floor((1 - t) * 3)
   end
 
   -- The world pass is not always a flat blit of the world canvas: tilt
@@ -585,9 +665,16 @@ return function(mod)
         end
       else
         local size = sizeOf(p.kind, p)
-        local alpha = 0.55 + 0.45 * (p.life / p.max)
-        love.graphics.setColor(OUTLINE[1], OUTLINE[2], OUTLINE[3], alpha * 0.8)
-        put(p.x - 1, p.y + 1, size + 2, size + 2)
+        -- Fades the whole way out rather than snapping off at the end of
+        -- the trail: full at the heels, a ghost three cells back.
+        local alpha = 0.12 + 0.88 * (p.life / p.max)
+        -- Smoke is the one thing that must NOT have a hard black edge --
+        -- it is meant to be thin. Fire keeps its skirt, which is what
+        -- gives a flame its shape against a bright tile.
+        if p.kind == "fire" and size > 2 then
+          love.graphics.setColor(OUTLINE[1], OUTLINE[2], OUTLINE[3], alpha * 0.75)
+          put(p.x - 1, p.y + 1, size + 2, size + 2)
+        end
         love.graphics.setColor(c[1], c[2], c[3], alpha)
         put(p.x, p.y, size, size)
         drew = drew + 1
@@ -637,10 +724,14 @@ return function(mod)
     -- the same one Cut leaves on grass -- placed on the cell just vacated.
     -- It is drawn in the world pass at the right anchor under every camera
     -- the engine has, which is the one thing a screen-space overlay can
-    -- never promise. The coloured particles ride on top of it.
+    -- never promise. The smoke particles ride on top of it.
+    --
+    -- SMOKE only. The engine's puff is a smoke sprite, and putting a grey
+    -- puff under a red flame or a yellow bolt would make both of them look
+    -- like they were smoking. Those two are the particles' own job.
     local kind = fxKind()
     local ow = game.overworld
-    if kind ~= "off" and running and ow and ow.startDustAnim
+    if kind == "dust" and running and ow and ow.startDustAnim
        and not ow.dustAnim and anchor and anchor.facing then
       local d = DIRV[anchor.facing]
       if d then
@@ -693,10 +784,8 @@ return function(mod)
       local input = game and game.input
       if input and input.isDown and input:isDown("b") then
         spawnClock = spawnClock + 1
-        if spawnClock % (CADENCE[kind] or 2) == 0 then
-          emit(kind, anchor)
-          once("spawn", "RUN FX: %s trail spawning", kind)
-        end
+        for _ = 1, PER_TICK do emit(kind, anchor) end
+        once("spawn", "RUN FX: %s trail spawning", kind)
       else
         once("nob", "RUN FX: running step, but B is not down at tick time")
       end
