@@ -524,17 +524,18 @@ local VIEWPORT = { width = 640, height = 576, gameX = 0, gameY = 0,
                    dpiX = 1, dpiY = 1 }
 
 local drawn, minX, maxX = 0, nil, nil
+local headW, tailW = nil, nil       -- rect width at each end of the trail
 local realRect = love.graphics.rectangle
-love.graphics.rectangle = function(_, x)
+love.graphics.rectangle = function(_, x, _y, w)
   drawn = drawn + 1
   if type(x) == "number" then
-    if not minX or x < minX then minX = x end
-    if not maxX or x > maxX then maxX = x end
+    if not minX or x < minX then minX, tailW = x, w end
+    if not maxX or x > maxX then maxX, headW = x, w end
   end
 end
 
 local function hud()
-  drawn, minX, maxX = 0, nil, nil
+  drawn, minX, maxX, headW, tailW = 0, nil, nil, nil, nil
   Runtime.call("render.hud", function() end, STUB, VIEWPORT)
   return drawn
 end
@@ -642,6 +643,49 @@ T.check(math.abs(fast - slow) <= 3,
   ("and the two speeds leave a comparable trail (%.1f vs %.1f cells)")
     :format(slow, fast))
 setOpt("speed", "2")
+
+-- ------- big at the heel, small at the tail
+--
+-- The shape a trail has to have: you should be able to tell which end the
+-- player is at from a still frame.  The run above goes RIGHTWARDS, so the
+-- freshest particles are at the largest x and the oldest at the smallest,
+-- and the rectangles at those two ends are what say whether it tapers.
+--
+-- An earlier pass had smoke EXPAND as it thinned, which is what real smoke
+-- does and which read as a smear rather than as a trail; this is the
+-- assertion that keeps all three kinds pointing the same way.
+
+for _, kind in ipairs({ "dust", "fire", "bolt" }) do
+  setOpt("fx", kind)
+  runAcross(40)
+  hud()
+  T.check(headW and tailW and headW > tailW,
+    ("RUN FX %s tapers: %s wide at the heel, %s at the tail")
+      :format(kind, tostring(headW), tostring(tailW)))
+end
+setOpt("fx", "fire")
+
+-- ------- the puff is not a grass thing, and not a smoke thing
+--
+-- The engine's dust animation is the most solidly visible part of the
+-- trail, and for a while it was given to smoke alone -- which is how
+-- flames and bolts came to look like they only existed over tall grass,
+-- where the dark tile behind them happened to give the particles an edge.
+-- Every kind gets it, on any ground.
+
+for _, kind in ipairs({ "dust", "fire", "bolt" }) do
+  setOpt("fx", kind)
+  OW.dustAnim = nil
+  STUB.overworld = OW
+  runner.facing, runner.moving = "down", true
+  speed(WALK, ctx{ b = true, player = runner })
+  Runtime.call("input.step", function() end, STUB, 1 / 60)
+  Runtime.emit("world.stepped", { mapId = "ROUTE_1", x = 2, y = 6 })
+  T.check(OW.dustAnim ~= nil, "RUN FX " .. kind .. " leaves the engine's puff too")
+end
+OW.dustAnim = nil
+STUB.overworld = nil
+setOpt("fx", "fire")
 
 -- ------- and through the engine's OWN draw path
 --

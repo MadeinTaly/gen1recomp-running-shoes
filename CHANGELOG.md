@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.4.1
+
+**The trail now shows everywhere, and it tapers.**
+
+- **`RUN FX` is visible on every surface, not just over tall grass.** It
+  always *ran* everywhere — the particles never cared what you were
+  standing on — but only smoke got the engine's dust puff, and that puff is
+  the most solidly visible part of the whole effect. Without it, flames and
+  bolts were carried by the coloured particles alone, and those only really
+  read against a dark tile. Tall grass is dark; a path is not. So the
+  effect looked like a grass feature.
+
+  Every kind now leaves the puff, on every running step, on any ground. And
+  every particle now gets a darker skirt under it — smoke included, in grey
+  rather than black — so it has an edge on a pale tile instead of
+  dissolving into it. Particles are bigger and hold more of their opacity
+  down the length of the trail.
+
+- **All three kinds now go big at the heel and taper to a point at the
+  tail.** You should be able to tell which end the player is at from a
+  still frame. 1.4.0 had smoke do the opposite — *expanding* as it thinned,
+  which is what real smoke does and which read as a smear rather than as a
+  trail. Flames and bolts taper the same way now, so the three differ in
+  colour and behaviour rather than in shape.
+
+- The suite pins both: it measures the width of the rectangles at each end
+  of a rightward run and asserts the heel end is wider than the tail end,
+  for every kind — and asserts every kind leaves the engine's puff, rather
+  than only smoke.
+
+**Things this mod does that were only ever written down in the source, put
+here where they can be found:**
+
+- The trail's length is measured in **cells of ground, not frames**, so it
+  is the same length at `x1.5` and at `x4`. A step is 8 frames at x2 and 4
+  at x4; a fixed lifetime would draw twice the trail at half the speed.
+- Particles are left in **world space** and you run away from them. They
+  barely drift on their own, because a trail is something left behind.
+- The trail uses **its own random number generator**, never the game's. A
+  spark drawn from `love.math.random` would move the dice that decide
+  encounters and battles — a spark you could see in a battle log.
+- `BURN GRASS` cuts by **swapping a map block**, the way `CUT` does, so the
+  tile stops being tall grass and the engine stops rolling encounters on it
+  without being asked. It suppresses nothing.
+- `SAFE GRASS` **does** suppress, and throws the vanilla dice first and
+  discards them, so a suppressed step draws from the RNG exactly what a
+  vanilla step would have drawn.
+- The coloured particles stand down under **tilt mode** or a world-replacing
+  **render pipeline** — a screen-space overlay cannot follow either camera.
+  The puff and the cut are engine drawing and keep working.
+- Every reason the overlay declines to draw is **logged once**, including
+  the one it cannot fix: an engine build from before the `render.hud` hook
+  existed.
+
 ## 1.4.0
 
 **A run now leaves something behind — and every bit of it has an off

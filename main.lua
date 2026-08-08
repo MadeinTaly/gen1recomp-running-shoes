@@ -141,10 +141,16 @@ local SHADES = {
   bolt = { { 1.00, 1.00, 0.88 }, { 1.00, 0.88, 0.15 }, { 0.80, 0.55, 0.04 } },
 }
 
--- Every particle gets a one-pixel black skirt underneath it, the way a GB
--- sprite gets its darkest shade: without it a bright blob on a bright tile
--- has no edge and reads as a glitch rather than as a thing.
+-- Every particle gets a darker skirt underneath it, the way a GB sprite
+-- gets its darkest shade: without one, a blob on a bright tile has no edge
+-- and stops reading as anything. Smoke gets a grey rather than a black,
+-- because smoke outlined in black is a rock.
 local OUTLINE = { 0.05, 0.04, 0.04 }
+local SKIRT = {
+  dust = { 0.22, 0.22, 0.21 },
+  fire = OUTLINE,
+  bolt = OUTLINE,
+}
 
 -- ------- how long a trail is
 --
@@ -511,21 +517,17 @@ return function(mod)
     return set[3]
   end
 
-  -- Progressive, and in the direction each thing actually goes.
-  --
-  -- Smoke EXPANDS as it thins: it leaves the ground tight and spreads as it
-  -- rises, and fading a growing puff is what separates smoke from a row of
-  -- shrinking dots. Fire does the opposite -- a flame is biggest where it
-  -- is fed and dies down to an ember. Lightning does neither; it is a line
-  -- with a width, and the width is two.
+  -- One shape for all three: big at the heel, tapering to a point at the
+  -- tail. A trail should read as a trail -- you should be able to tell
+  -- which end the player is at from the shape alone, without watching it
+  -- move. An earlier pass had smoke EXPAND as it thinned, which is what
+  -- real smoke does and which read as a smear rather than as a trail.
+  local BIG = { dust = 6, fire = 6, bolt = 3 }
+
   local function sizeOf(kind, p)
-    if kind == "bolt" then return 2 end
-    local t = p.life / p.max          -- 1 fresh, 0 gone
-    if kind == "fire" then
-      local size = 1 + math.floor(t * 5)
-      return size > 5 and 5 or size
-    end
-    return 2 + math.floor((1 - t) * 3)
+    local big = BIG[kind] or 5
+    local size = 1 + math.floor((p.life / p.max) * big)
+    return size > big and big or size
   end
 
   -- The world pass is not always a flat blit of the world canvas: tilt
@@ -649,30 +651,33 @@ return function(mod)
     for i = 1, #particles do
       local p = particles[i]
       local c = shadeOf(p.kind, p)
+      local size = sizeOf(p.kind, p)
+      -- Fades the whole way out rather than snapping off at the end of the
+      -- trail, but never down to nothing you can see: the far end is a
+      -- ghost, not an absence.
+      local alpha = 0.30 + 0.70 * (p.life / p.max)
+      local skirt = SKIRT[p.kind] or OUTLINE
       if p.kind == "bolt" then
         -- a bolt is lit on alternate ticks: a spark that burns steadily
         -- for ten frames is a lamp, not lightning
         if p.life % 2 == 1 then
-          love.graphics.setColor(OUTLINE[1], OUTLINE[2], OUTLINE[3], 0.9)
+          love.graphics.setColor(skirt[1], skirt[2], skirt[3], alpha * 0.85)
           for _, off in ipairs(BOLT) do
-            put(p.x + off[1], p.y + off[2] + 1, 2, 2)
+            put(p.x + off[1], p.y + off[2] * size / 2 + 1, size, size)
           end
-          love.graphics.setColor(c[1], c[2], c[3], 1)
+          love.graphics.setColor(c[1], c[2], c[3], alpha)
           for _, off in ipairs(BOLT) do
-            put(p.x + off[1], p.y + off[2], 2, 2)
+            put(p.x + off[1], p.y + off[2] * size / 2, size, size)
           end
           drew = drew + 1
         end
       else
-        local size = sizeOf(p.kind, p)
-        -- Fades the whole way out rather than snapping off at the end of
-        -- the trail: full at the heels, a ghost three cells back.
-        local alpha = 0.12 + 0.88 * (p.life / p.max)
-        -- Smoke is the one thing that must NOT have a hard black edge --
-        -- it is meant to be thin. Fire keeps its skirt, which is what
-        -- gives a flame its shape against a bright tile.
-        if p.kind == "fire" and size > 2 then
-          love.graphics.setColor(OUTLINE[1], OUTLINE[2], OUTLINE[3], alpha * 0.75)
+        -- Every kind gets a darker skirt, smoke included. A soft grey blob
+        -- on a bright tile has no edge and stops reading as anything at
+        -- all -- which is how the trail came to look like it only existed
+        -- over tall grass, where the tile behind it happens to be dark.
+        if size > 2 then
+          love.graphics.setColor(skirt[1], skirt[2], skirt[3], alpha * 0.8)
           put(p.x - 1, p.y + 1, size + 2, size + 2)
         end
         love.graphics.setColor(c[1], c[2], c[3], alpha)
@@ -724,14 +729,18 @@ return function(mod)
     -- the same one Cut leaves on grass -- placed on the cell just vacated.
     -- It is drawn in the world pass at the right anchor under every camera
     -- the engine has, which is the one thing a screen-space overlay can
-    -- never promise. The smoke particles ride on top of it.
+    -- never promise. The coloured particles ride on top of it.
     --
-    -- SMOKE only. The engine's puff is a smoke sprite, and putting a grey
-    -- puff under a red flame or a yellow bolt would make both of them look
-    -- like they were smoking. Those two are the particles' own job.
+    -- EVERY kind gets it, and every step, on any ground. A previous pass
+    -- gave the puff to smoke alone on the theory that a grey cloud under a
+    -- red flame would look like the fire was smoking -- but the puff is
+    -- also the most solidly visible thing in the trail, so withholding it
+    -- is what made flames and bolts read as "only over tall grass", where
+    -- the dark tile behind them happened to give the particles an edge.
+    -- Something you can see everywhere beats a purer palette.
     local kind = fxKind()
     local ow = game.overworld
-    if kind == "dust" and running and ow and ow.startDustAnim
+    if kind ~= "off" and running and ow and ow.startDustAnim
        and not ow.dustAnim and anchor and anchor.facing then
       local d = DIRV[anchor.facing]
       if d then

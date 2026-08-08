@@ -66,11 +66,20 @@ and the other two ship off already.
 **`RUN FX`** leaves a trail off your heels while you hold B, reaching about
 **three and a half cells back** and fading the whole way out.
 
+All three go **big at the heel and taper to a point at the tail**, so you
+can tell which end the player is at from a still frame, and all three show
+on any ground — not just over tall grass.
+
 | | |
 | --- | --- |
-| `DUST` | smoke — greys, no hard edge, and it **expands** as it thins, the way smoke does. The engine's own dust puff anchors the first cell. |
-| `FLAMES` | orange at the heel, **red** through the middle, ember at the end, shrinking as it dies down. |
+| `DUST` | smoke — greys, with a soft grey skirt rather than a black one. |
+| `FLAMES` | orange at the heel, **red** through the middle, ember at the end. |
 | `BOLTS` | a white-hot core cooling through **yellow** into amber, lit on alternate ticks so it crackles rather than glows. |
+
+Every kind also leaves the engine's own dust puff on the cell you have just
+left — the same animation `CUT` leaves on grass. That is drawn in the world
+pass, at the right place under every camera the engine has, so there is
+always something solid in the trail no matter what tile you are crossing.
 
 The length is measured in **cells of ground, not frames**, because frames
 are not a length: a step is 8 frames at x2 and 4 at x4, so a fixed lifetime
