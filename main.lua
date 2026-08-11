@@ -132,24 +132,38 @@ local DIRV = { up = { 0, -1 }, down = { 0, 1 },
 -- Smoke greys, fire reds, lightning yellows -- and none of them pale,
 -- because a pale anything at half opacity over Route 1's green is a rumour
 -- rather than an effect.
-local SHADES = {
-  -- smoke: light where it leaves the ground, darkening as it thins out
-  dust = { { 0.88, 0.88, 0.86 }, { 0.60, 0.60, 0.58 }, { 0.34, 0.34, 0.33 } },
-  -- fire: orange at the heel, red through the middle, ember at the end
-  fire = { { 1.00, 0.55, 0.12 }, { 0.92, 0.16, 0.07 }, { 0.48, 0.05, 0.03 } },
-  -- lightning: a white-hot core cooling through yellow into amber
-  bolt = { { 1.00, 1.00, 0.88 }, { 1.00, 0.88, 0.15 }, { 0.80, 0.55, 0.04 } },
-}
-
--- Every particle gets a darker skirt underneath it, the way a GB sprite
--- gets its darkest shade: without one, a blob on a bright tile has no edge
--- and stops reading as anything. Smoke gets a grey rather than a black,
--- because smoke outlined in black is a rock.
-local OUTLINE = { 0.05, 0.04, 0.04 }
-local SKIRT = {
-  dust = { 0.22, 0.22, 0.21 },
-  fire = OUTLINE,
-  bolt = OUTLINE,
+-- ------- the ramps
+--
+-- Five shades each, brightest first, and a particle is drawn from a
+-- three-shade WINDOW onto that ramp: core, middle, rim. Two things fall
+-- out of one table that way.
+--
+-- Across the particle, the window gives it a lit core and a dark rim,
+-- which is how a Game Boy sprite is shaded and the reason these now read
+-- as objects rather than as coloured squares.
+--
+-- Along its life, the window SLIDES down the ramp: a flame starts with
+-- white-yellow at the core and ends as an ember with nothing bright left
+-- in it, without the colours ever being interpolated. Same trick, one
+-- table, no gradients -- a smooth blend would look like somebody else's
+-- engine.
+local RAMP = {
+  -- smoke: near-white where it leaves the ground, down to a grey that
+  -- still has an edge on a pale tile
+  dust = {
+    { 0.95, 0.95, 0.94 }, { 0.80, 0.80, 0.78 }, { 0.60, 0.60, 0.58 },
+    { 0.40, 0.40, 0.39 }, { 0.20, 0.20, 0.20 },
+  },
+  -- fire: white-hot, yellow, orange, red, ember
+  fire = {
+    { 1.00, 0.96, 0.72 }, { 1.00, 0.78, 0.16 }, { 0.98, 0.42, 0.06 },
+    { 0.86, 0.12, 0.05 }, { 0.40, 0.04, 0.03 },
+  },
+  -- lightning: a white core cooling through yellow into a dark amber
+  bolt = {
+    { 1.00, 1.00, 0.95 }, { 1.00, 0.95, 0.45 }, { 1.00, 0.84, 0.10 },
+    { 0.78, 0.52, 0.03 }, { 0.32, 0.20, 0.02 },
+  },
 }
 
 -- ------- how long a trail is
@@ -164,7 +178,11 @@ local SKIRT = {
 -- Three and a half cells: three clear ones behind the player and the tail
 -- of a fourth going out, so the far end fades rather than stops.
 local TRAIL_CELLS = 3.5
-local LIFE_MIN, LIFE_MAX = 24, 96
+-- The floor has to sit UNDER the fastest rung or it stops being a floor and
+-- starts being the answer: at x4 a step is 4 frames, so the honest lifetime
+-- is 14 ticks, and a floor of 24 stretched the trail to nearly six cells at
+-- exactly the speed the cells measure exists to keep steady.
+local LIFE_MIN, LIFE_MAX = 10, 96
 
 -- particles per logic tick while running.  Two, side by side across the
 -- width of the cell, so the trail is a band with texture in it rather than
@@ -176,9 +194,12 @@ local PER_TICK = 2
 -- shoved and far too long for a footfall at four frames a tile.
 local PUFF_FRAMES = 10
 
--- a bolt is not a blob: four pixels stacked in a zigzag, drawn upward from
--- the spawn point
-local BOLT = { { 0, 0 }, { 1, -2 }, { -1, -4 }, { 0, -6 } }
+-- A bolt is not a blob and not a stack of dots: it is a jagged line, drawn
+-- upward from the spawn point as five joints whose sideways kick alternates
+-- and grows. Re-picked every other frame from the particle's own seed, so
+-- it crackles into a new shape rather than sitting there being a shape.
+local BOLT_JOINTS = 5
+local BOLT_RISE = 2      -- world pixels between joints
 
 -- Cosmetic randomness gets its own generator on purpose. The engine draws
 -- wild encounters and every battle roll from love.math.random, and a trail
@@ -236,7 +257,7 @@ return function(mod)
   local function fxKind()
     local ok, value = pcall(function() return mod.options:get("fx") end)
     if not ok or type(value) ~= "string" then return "off" end
-    return SHADES[value] and value or "off"
+    return RAMP[value] and value or "off"
   end
 
   -- ------- putting the duration back
@@ -470,9 +491,12 @@ return function(mod)
     if not (player.px and player.py) then return end
     local d = DIRV[player.facing] or DIRV.down
     -- Across the direction of travel, so the two particles a tick spread
-    -- over the width of the cell instead of stacking on one line.
+    -- over the width of the cell instead of stacking on one line -- and
+    -- biased to alternating sides, because what is shedding this is a pair
+    -- of feet rather than a hosepipe.
     local ax, ay = -d[2], d[1]
-    local spread = rnd() * 10 - 5
+    local foot = (spawnClock % 2 == 0) and 1 or -1
+    local spread = foot * (2 + rnd() * 3.5) + (rnd() * 2 - 1)
     local life = lifeSpan()
     particles[#particles + 1] = {
       kind = kind,
@@ -487,6 +511,9 @@ return function(mod)
       vx = (rnd() * 0.16 - 0.08),
       vy = -(kind == "fire" and 0.22 or 0.10) + (rnd() * 0.10 - 0.05),
       life = life, max = life,
+      -- one number per particle, standing in for every per-particle random
+      -- the draw wants: which way its smoke leans, which way its bolt jags
+      seed = math.floor(rnd() * 64),
     }
   end
 
@@ -509,12 +536,14 @@ return function(mod)
   -- Everything below is guarded so a headless run (no love, no graphics)
   -- and a frame with nothing to show both cost a single comparison.
 
-  local function shadeOf(kind, p)
-    local set = SHADES[kind] or SHADES.dust
-    local t = p.life / p.max            -- 1 fresh, 0 gone
-    if t > 0.66 then return set[1] end
-    if t > 0.33 then return set[2] end
-    return set[3]
+  -- Where on the ramp this particle is drawing from. Fresh sits at the top
+  -- (core white-hot, rim mid), old sits at the bottom (core mid, rim
+  -- nearly gone) -- so age is a slide down one table rather than a second
+  -- set of colours.
+  local function window(kind, p)
+    local ramp = RAMP[kind] or RAMP.dust
+    local i = math.floor((1 - p.life / p.max) * 2.999)   -- 0, 1 or 2
+    return ramp[i + 1], ramp[i + 2], ramp[i + 3]
   end
 
   -- One shape for all three: big at the heel, tapering to a point at the
@@ -522,7 +551,7 @@ return function(mod)
   -- which end the player is at from the shape alone, without watching it
   -- move. An earlier pass had smoke EXPAND as it thinned, which is what
   -- real smoke does and which read as a smear rather than as a trail.
-  local BIG = { dust = 6, fire = 6, bolt = 3 }
+  local BIG = { dust = 6, fire = 7, bolt = 3 }
 
   local function sizeOf(kind, p)
     local big = BIG[kind] or 5
@@ -648,40 +677,78 @@ return function(mod)
     -- engine's own drawing rather than ours.
 
     -- ------- the trail
+    --
+    -- A particle is no longer one filled square. It is a rim, a body and a
+    -- lit core -- three shades off the same ramp -- laid out as four
+    -- rectangles: two crossed bars whose overlap is a square with its
+    -- corners knocked off, then the body inset inside that, then the core.
+    --
+    -- Four rectangles rather than a per-pixel mask on purpose. This runs
+    -- once per particle per frame on a phone, and a 7x7 mask at seventy
+    -- live particles is three thousand draw calls a frame for a decoration.
+    -- The corners are what the eye reads as "round"; everything else is
+    -- shading.
+    local function blob(p, w, h, rim, body, core, alpha, coreBias)
+      local x, y = p.x - w / 2, p.y - h / 2
+      love.graphics.setColor(rim[1], rim[2], rim[3], alpha)
+      put(x + 1, y, w - 2, h)            -- corners off the top and bottom
+      put(x, y + 1, w, h - 2)            -- and off the sides
+      if w >= 4 and h >= 4 then
+        love.graphics.setColor(body[1], body[2], body[3], alpha)
+        put(x + 1, y + 1, w - 2, h - 2)
+      end
+      if w >= 5 and h >= 5 then
+        -- The lit core sits off centre: a flame is hottest at its base and
+        -- a puff of smoke catches the light on top, so one number moves the
+        -- highlight to where the thing is actually bright.
+        local cw = math.max(1, math.floor(w / 3))
+        love.graphics.setColor(core[1], core[2], core[3], alpha)
+        put(p.x - cw / 2, p.y - cw / 2 + coreBias, cw, cw)
+      end
+    end
+
     for i = 1, #particles do
       local p = particles[i]
-      local c = shadeOf(p.kind, p)
+      local core, body, rim = window(p.kind, p)
       local size = sizeOf(p.kind, p)
       -- Fades the whole way out rather than snapping off at the end of the
       -- trail, but never down to nothing you can see: the far end is a
       -- ghost, not an absence.
       local alpha = 0.30 + 0.70 * (p.life / p.max)
-      local skirt = SKIRT[p.kind] or OUTLINE
+      local age = p.max - p.life
+
       if p.kind == "bolt" then
-        -- a bolt is lit on alternate ticks: a spark that burns steadily
-        -- for ten frames is a lamp, not lightning
+        -- Lit on alternate ticks, and re-drawn to a different jag each
+        -- time: a spark that burns steadily in one shape for ten frames is
+        -- a lamp, not lightning.
         if p.life % 2 == 1 then
-          love.graphics.setColor(skirt[1], skirt[2], skirt[3], alpha * 0.85)
-          for _, off in ipairs(BOLT) do
-            put(p.x + off[1], p.y + off[2] * size / 2 + 1, size, size)
-          end
-          love.graphics.setColor(c[1], c[2], c[3], alpha)
-          for _, off in ipairs(BOLT) do
-            put(p.x + off[1], p.y + off[2] * size / 2, size, size)
+          local kick, x, y = 0, p.x, p.y
+          for j = 1, BOLT_JOINTS do
+            -- deterministic from the particle's own seed and the frame, so
+            -- the whole arc re-jags together instead of each joint
+            -- twitching on its own
+            kick = ((p.seed + j * 7 + age) % 5) - 2
+            local nx, ny = x + kick, y - BOLT_RISE
+            local shade = j <= 2 and core or (j <= 4 and body or rim)
+            love.graphics.setColor(shade[1], shade[2], shade[3], alpha)
+            -- one rectangle per joint, spanning the gap it just crossed
+            put(math.min(x, nx), ny, math.abs(kick) + size, BOLT_RISE + 1)
+            x, y = nx, ny
           end
           drew = drew + 1
         end
+      elseif p.kind == "fire" then
+        -- A tongue rather than a ball: taller than it is wide, and it
+        -- narrows as it dies, so a flame goes out rather than shrinking.
+        blob(p, math.max(1, size - 1), size + 1, rim, body, core, alpha, 1)
+        drew = drew + 1
       else
-        -- Every kind gets a darker skirt, smoke included. A soft grey blob
-        -- on a bright tile has no edge and stops reading as anything at
-        -- all -- which is how the trail came to look like it only existed
-        -- over tall grass, where the tile behind it happens to be dark.
-        if size > 2 then
-          love.graphics.setColor(skirt[1], skirt[2], skirt[3], alpha * 0.8)
-          put(p.x - 1, p.y + 1, size + 2, size + 2)
-        end
-        love.graphics.setColor(c[1], c[2], c[3], alpha)
-        put(p.x, p.y, size, size)
+        -- Smoke sways as it rises. The sway comes off the particle's age
+        -- and its own seed, so no two puffs lean the same way at the same
+        -- time and none of it needs storing.
+        local sway = math.sin(age * 0.22 + p.seed) * 1.6
+        local at = { x = p.x + sway, y = p.y }
+        blob(at, size, size, rim, body, core, alpha, -1)
         drew = drew + 1
       end
     end

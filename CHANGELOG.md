@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.4.2
+
+**The effects are drawn properly now.**
+
+- **Each particle is a shaded sprite, not a coloured square.** It has a
+  dark rim, a body and a lit core — three shades, laid out as a square with
+  its corners knocked off, which is what the eye reads as round. That is
+  how a Game Boy sprite is shaded, and it is the difference between an
+  object and a rectangle.
+
+  All three shades come off **one five-step ramp per kind**, and a particle
+  draws from a three-shade *window* onto it. The window slides down the
+  ramp as the particle ages, so a flame starts white-yellow at the core and
+  ends as an ember with nothing bright left in it — without any colour ever
+  being interpolated. A smooth blend would look like somebody else's engine.
+
+- **Fire is a tongue, not a ball**: taller than it is wide, narrowing as it
+  dies, with its lit core low, where a flame is actually hottest.
+
+- **Smoke sways as it rises.** The lean comes off each puff's own seed and
+  its age, so no two lean the same way at the same moment, and its
+  highlight sits high where a puff catches the light.
+
+- **Bolts are a jagged line again.** Five joints, each kicking sideways,
+  re-picked every other frame from the particle's seed — so it crackles
+  into a new shape instead of being one shape that blinks. The near end is
+  the bright core shade and it cools along its length.
+
+- **Particles come off alternating feet** rather than a random spray, which
+  is what is actually shedding them.
+
+- **Fixed: at `x4` the trail ran to nearly six cells, not three and a half.**
+  The lifetime floor was set *above* the fastest rung's honest lifetime (a
+  4-frame step wants 14 ticks; the floor was 24), so the floor stopped
+  being a floor and became the answer — at exactly the speed the
+  cells-not-frames measure exists to hold steady. Measured across every
+  kind at x1.5, x2 and x4 it is now 3.2–3.7 cells everywhere, and the
+  suite's tolerance is tightened from three cells to one so this cannot
+  come back quietly.
+
+- Cost, since this draws on a phone: 70–224 rectangles a frame depending on
+  speed and kind. The particle is four rectangles rather than a per-pixel
+  mask deliberately — a 7x7 mask at seventy live particles would be three
+  thousand draw calls a frame for a decoration.
+
 ## 1.4.1
 
 **The trail now shows everywhere, and it tapers.**

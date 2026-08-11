@@ -639,8 +639,12 @@ hud()
 local fast = trailCells()
 T.check(fast >= 3,
   ("at x4 it still reaches three cells back (got %.1f)"):format(fast))
-T.check(math.abs(fast - slow) <= 3,
-  ("and the two speeds leave a comparable trail (%.1f vs %.1f cells)")
+-- Tight on purpose.  A loose bound here passed happily while the lifetime
+-- floor was set ABOVE the fastest rung's honest lifetime, which stretched
+-- the trail to nearly six cells at x4 -- at exactly the speed the
+-- cells-not-frames measure exists to hold steady.
+T.check(math.abs(fast - slow) <= 1,
+  ("and the two speeds leave the SAME trail, within a cell (%.1f vs %.1f)")
     :format(slow, fast))
 setOpt("speed", "2")
 

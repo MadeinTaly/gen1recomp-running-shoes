@@ -72,9 +72,16 @@ on any ground — not just over tall grass.
 
 | | |
 | --- | --- |
-| `DUST` | smoke — greys, with a soft grey skirt rather than a black one. |
-| `FLAMES` | orange at the heel, **red** through the middle, ember at the end. |
-| `BOLTS` | a white-hot core cooling through **yellow** into amber, lit on alternate ticks so it crackles rather than glows. |
+| `DUST` | smoke — greys, swaying as it rises, its highlight up top where a puff catches the light. |
+| `FLAMES` | a tongue rather than a ball: taller than it is wide, its lit core low where a flame is hottest, narrowing as it dies. |
+| `BOLTS` | a jagged line of five joints, re-picked every other frame so it crackles into a new shape instead of blinking. |
+
+Each particle is a shaded sprite rather than a coloured square: a dark rim,
+a body and a lit core, laid out as a square with its corners knocked off.
+All three shades come off **one five-step ramp per kind**, and a particle
+draws from a three-shade *window* onto it — the window sliding down the
+ramp as the particle ages, so a flame starts white-yellow and ends an ember
+without any colour ever being interpolated.
 
 Every kind also leaves the engine's own dust puff on the cell you have just
 left — the same animation `CUT` leaves on grass. That is drawn in the world
