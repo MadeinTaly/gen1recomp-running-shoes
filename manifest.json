@@ -1,7 +1,7 @@
 {
   "id": "running_shoes",
   "name": "Running Shoes",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "api": 2,
   "games": [
     "gen1",
@@ -18,6 +18,6 @@
   "permissions": [
     "engine_internals"
   ],
-  "description": "Hold B to walk faster, at a speed you pick: x1.5, x2, x3 or x4. Rides the engine's own movement.speed hook, whose comment names running shoes as the reason it exists. NEW: a run can leave a trail off your heels -- smoke, flames or lightning -- reaching about three and a half cells back; it can CUT the tall grass you run across, one clod at a time, the way the CUT move cuts it, so that grass has no Pokemon left in it; and it can carry you through tall grass without ever starting a wild battle. Every one of those has an off switch, the last two ship off, and with all three left alone nothing but the duration of a step changes. Optional boosts for the bicycle and for surfing too. Runs on Pokemon Gold too: the speed, the bike and surf boosts and SAFE GRASS all cross over, while CUT GRASS and RUN FX stay Gen 1 only and say so.",
+  "description": "Hold B to walk faster, at a speed you pick: x1.5, x2, x3 or x4. Rides the engine's own movement.speed hook, whose comment names running shoes as the reason it exists. A run can leave a trail off your heels -- smoke, flames or lightning -- reaching about three and a half cells back; it can CUT the tall grass you run across, one clod at a time, the way the CUT move cuts it, so that grass has no Pokemon left in it; and it can carry you through tall grass without ever starting a wild battle. Every one of those has an off switch, the last two ship off, and with all three left alone nothing but the duration of a step changes. Optional boosts for the bicycle and for surfing too. Runs on Pokemon Gold too, and as of 1.6.0 every row works there: RUN SPEED, BOOST BIKE, BOOST SURF, SAFE GRASS, CUT GRASS and RUN FX all cross over.",
   "github": "MadeinTaly/gen1recomp-running-shoes"
 }

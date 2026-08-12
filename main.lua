@@ -87,6 +87,14 @@
 -- cell's 2x2 tile quadrant, which comes from the cut one -- a cut exactly
 -- one clod wide, built only from tile ids the tileset already has.
 --
+-- Gold's own CUT is the same kind of whole-block swap, off a different
+-- table (`FieldMoves.CUT_BLOCKS`, src/world/gen2/FieldMoves.lua:262) with no
+-- tile ids in it at all, only block ids and an animation byte -- so the
+-- one-clod trick above runs there too, built from a block DIFF instead of a
+-- constant. See "cutting the grass on Gold" further down for the shape of
+-- it and why Gold also needs a synthesized COLLISION entry alongside the
+-- synthesized tile block, which Gen 1's tile-id walkability never required.
+--
 -- ------- the trail
 --
 -- Two layers, and only the second one can fail. The anchor is the ENGINE's
@@ -96,12 +104,22 @@
 -- particles through `render.hud` give dust, flames and bolts their
 -- different looks. If that surface is unavailable -- an engine build older
 -- than the hook -- the puff is still there and the mod says so in the log.
+-- Gold has no `startDustAnim` to borrow (see "what changes on Gold" further
+-- down), so there the coloured particles ARE the whole trail -- which is
+-- also true the moment this mod runs on an engine build with no
+-- `startDustAnim` at all, so nothing about the coloured layer assumes it.
 --
--- The overlay's projection rests on one fact about this engine's camera:
--- `Camera:follow` centres on the player with no lerp and no edge clamp, so
--- the player is not somewhere on screen -- he is ALWAYS at the same place.
--- The world canvas is blitted centred in the window and his cell's
--- top-left corner sits 16 world pixels left of that centre and 8 above it:
+-- The overlay's projection rests on one fact about the engine's camera, and
+-- it holds in both games because both call the SAME module the same way:
+-- `Camera:follow` (src/render/Camera.lua:14) centres on the player with no
+-- lerp and no edge clamp, so the player is not somewhere on screen -- he is
+-- ALWAYS at the same place. Gen 1's `OverworldController.lua:485` and Gold's
+-- `World.lua:9928` both call `camera:follow(p.px, p.py, viewW, viewH)`, and
+-- both size that view the same way -- forced to an even width and height, and
+-- grown for tilt (`Renderer:worldViewSize`, src/render/Renderer.lua:236, vs
+-- `World:draw`, World.lua:9906-9920) -- so the world canvas is blitted
+-- centred in the window under either engine, and his cell's top-left corner
+-- sits 16 world pixels left of that centre and 8 above it:
 --
 --     screenX = width/2  - 16*sx + (worldX - player.px) * sx
 --     screenY = height/2 -  8*sy + (worldY - player.py) * sy
@@ -259,15 +277,27 @@ return function(mod)
   -- Read off the live game rather than a version allow-list, which is the
   -- one shape that excludes a mod from Gold by construction. `live` is the
   -- game the hooks below are handed every logic tick; before the first one
-  -- arrives nothing that asks this has anything to do anyway.
-  local function isGen2()
-    local save = live and live.save
+  -- arrives nothing that asks this has anything to do anyway. `isGen2Save`
+  -- takes a save table directly so the render.hud arm below -- which is
+  -- handed its own `game` argument, not necessarily the same table `live`
+  -- points at yet -- can ask the same question of whatever it was actually
+  -- given, rather than of a global that might still be nil on the very
+  -- first frame.
+  local function isGen2Save(save)
     return save ~= nil and save.generation == 2
   end
 
-  -- ------- what does NOT cross to Gold, and why
+  local function isGen2()
+    return isGen2Save(live and live.save)
+  end
+
+  local function isGen2Game(game)
+    return isGen2Save(game and game.save)
+  end
+
+  -- ------- what changes on Gold, and why
   --
-  -- The speed itself does, unchanged: src/world/gen2/World.lua:8817 raises
+  -- The speed crosses over unchanged: src/world/gen2/World.lua:8817 raises
   -- `movement.speed` with the same ctx keys the Gen 1 site offers (and adds
   -- `downhill` and `playerState`, because the Cycling Road already needed
   -- them). Better still, Gold rewrites the base duration from scratch every
@@ -275,53 +305,63 @@ return function(mod)
   -- hook -- so the "put the number back" dance the Gen 1 arm has to do is
   -- not merely unnecessary there, it has nothing to undo.
   --
-  -- Two things do not cross, and are switched off rather than left to fail
-  -- in the picture:
+  -- CUT GRASS and RUN FX used to stand down here too, on the strength of two
+  -- claims that turned out to be about the WRONG place to look rather than
+  -- about a missing capability:
   --
-  --   CUT GRASS   cuts by swapping a block, and it finds the "after" id in
-  --               `data.field.cutTreeSwaps`. `field` is one of the six
-  --               registries with NO Gen 2 home, and its only two readers
-  --               in the whole engine are in src/world/OverworldController
-  --               .lua, which a Gold boot never loads. There is no table to
-  --               read and no reader to read it.
+  --   CUT GRASS   "the swap table has no Gen 2 home" was true of
+  --               `data.field.cutTreeSwaps` and beside the point, because
+  --               Gold's own CUT does not read that table at all. It reads
+  --               `FieldMoves.CUT_BLOCKS` (src/world/gen2/FieldMoves.lua:262),
+  --               a per-tileset { facing block -> replacement block,
+  --               animation } table, and `World:runCut` (World.lua:5271)
+  --               swaps the whole block once the text box closes. That is
+  --               reachable from a mod with `engine_internals` (already
+  --               declared below) the same way this file already reaches
+  --               `mod.world:replaceBlock`, which is `WorldAPI:replaceBlock`
+  --               (src/world/gen2/WorldAPI.lua:134) calling straight through
+  --               to `World:changeBlock` (World.lua:2014) -- the exact write
+  --               `runCut` itself makes. See "cutting the grass on Gold"
+  --               below for the one real difference: Gold's grass is not one
+  --               tile id the way Red's is, so the one-clod trick has to
+  --               diff BLOCKS instead of comparing against a constant.
   --
-  --   RUN FX      the trail is measured from the Gen 1 world canvas, and
-  --               Gold composites through Chrome.fitScale instead. Rather
-  --               than draw a plausible smear in the wrong place, it stands
-  --               down until it has been checked in a real Gold boot.
+  --   RUN FX      "measured from the Gen 1 world canvas" was also beside the
+  --               point: the projection below never reads anything Gen 1
+  --               specific, only `Camera:follow` (src/render/Camera.lua:14)
+  --               and the viewport `render.hud` hands over, and Gold's own
+  --               `World:draw` (World.lua:9889) calls the SAME
+  --               `self.camera:follow(p.px, p.py, vw, vh)` with the SAME
+  --               even-size-and-tilt-growth view sizing Gen 1's
+  --               `Renderer:worldViewSize` (src/render/Renderer.lua:236)
+  --               works out for itself -- one module, one formula, two
+  --               callers. What genuinely needed a Gen 2 arm was
+  --               `topIsOverworld` below: Gold's overworld is not a stack
+  --               state (see the note over it), so the Gen 1 test for "is it
+  --               safe to draw" always answered no on a plain walk, which is
+  --               what actually stood the trail down, not the projection.
   --
-  -- Both are Gen 1 features on a Gen 1+2 mod, which is the honest shape:
-  -- what works, works everywhere; what does not, says so once in the log
-  -- and stays out of the way.
-  -- Said once per boot. `once` further down is the trail's own latch and is
-  -- declared after this, so this keeps its own rather than reaching forward
-  -- to an upvalue that is still nil when a step first asks.
-  local saidGen1Only = {}
-  local function sayOnce(key, message)
-    if saidGen1Only[key] then return end
-    saidGen1Only[key] = true
-    pcall(function() mod.log:info(message) end)
-  end
-
+  -- One piece of each honestly does not cross, and both are gated rather
+  -- than faked:
+  --
+  --   * the ENGINE's own dust puff behind a running step
+  --     (`OverworldState.startDustAnim`) has no Gen 2 backing at all --
+  --     Gold's World never gets a `game.overworld` (Game2.lua has no such
+  --     field; WorldAPI.lua:39 reads `game.world` instead) and
+  --     `src/world/gen2/World.lua` has no `startDustAnim` method to call.
+  --     The `ow and ow.startDustAnim` guards in `world.stepped` below
+  --     already answer nil on Gold and skip it; the mod's OWN coloured
+  --     particles do not depend on that puff and keep drawing regardless
+  --     (see "the puff is not a grass thing" further down).
+  --   * an engine build with no `render.hud` call site is still a real gate,
+  --     generation or not -- that is the `nohud` warning further down.
   local function cutOn()
-    if not enabled("burn") then return false end
-    if isGen2() then
-      sayOnce("cut", "CUT GRASS is Gen 1 only: field.cutTreeSwaps has no "
-        .. "Gen 2 home and no Gen 2 reader; leaving the grass standing")
-      return false
-    end
-    return true
+    return enabled("burn")
   end
 
   local function fxKind()
     local ok, value = pcall(function() return mod.options:get("fx") end)
     if not ok or type(value) ~= "string" then return "off" end
-    if isGen2() then
-      sayOnce("fx", "RUN FX is Gen 1 only for now: the trail is measured "
-        .. "from the Gen 1 world canvas and Gold composites its own; "
-        .. "standing down rather than drawing in the wrong place")
-      return "off"
-    end
     return RAMP[value] and value or "off"
   end
 
@@ -502,7 +542,7 @@ return function(mod)
   -- block would start again from the uncut original and undo the first.
   -- The write goes through mod.world:replaceBlock, which is the supported
   -- way to change the running map and rebuilds the renderer for us.
-  local function cutGrassAt(game, cx, cy, quiet)
+  local function cutGrassAtGen1(game, cx, cy, quiet)
     local ow = game and game.overworld
     local map = ow and ow.map
     if not (map and map.def and map.tileset) then return false end
@@ -529,6 +569,180 @@ return function(mod)
       ow:startDustAnim(cx, cy)
     end
     return true
+  end
+
+  -- ------- cutting the grass on Gold
+  --
+  -- Gold's own CUT does not touch a tile at all. `FieldMoves.somethingToCut`
+  -- (src/world/gen2/FieldMoves.lua:310) looks up the block the player is
+  -- FACING in `FieldMoves.CUT_BLOCKS` (:262), a per-tileset { before block ->
+  -- after block, animation } table transcribed from
+  -- data/collision/field_move_blocks.asm, and `World:runCut` (World.lua:5271)
+  -- swaps the WHOLE 32x32 block for the "after" one once the text box
+  -- closes. That is the same "four tiles for one footstep" problem BURN
+  -- GRASS exists to fix on Gen 1 -- so the same one-clod trick applies, on
+  -- different raw material.
+  --
+  -- `CUT_BLOCKS` never names a tile id, only two BLOCK ids and an animation
+  -- byte -- 1 for the grass swirl, 0 for the falling tree (World.lua:260-261)
+  -- -- so there is no single GRASS_TILE constant to key off the way Red's
+  -- OVERWORLD tileset allows. Instead, every GRASS row (animation 1) in a
+  -- tileset's table has its "before" and "after" 16-tile blocks diffed
+  -- against each other, and every position that changed becomes one entry
+  -- in a SOURCE TILE -> DEST TILE table -- Gen 1's single substitution,
+  -- generalised to however many distinct grass tiles Gold's edge and corner
+  -- art actually uses.
+  --
+  -- One thing Gen 1's version never had to worry about: Gold's walkability
+  -- is not a tile-id set, it is `Map:cellCollision` (src/world/gen2/Map.lua
+  -- :55), ONE COLL_* byte per CELL taken from `tileset.collision[blockId+1]`
+  -- -- a table built in lockstep with `tileset.blocks` off the same
+  -- METATILE_COUNT loop (src/import/RomExtractorGen2.lua:803-820), so a
+  -- synthesized block needs a synthesized collision QUAD at the same new id
+  -- or the cut cell reads back as impassable rather than as plain ground.
+  -- The byte for it is not a guess: it is the matching CUT_BLOCKS row's
+  -- "after" block's own quad, at the SAME quadrant -- the actual cart answer
+  -- for what a real cut of that quadrant collides as.
+  local gen2Subst = {}   -- tileset def (by identity) -> { [srcTile] = dstTile }
+  local gen2Synth = {}   -- tileset def (by identity) -> "block:qx,qy" -> new block id
+
+  -- Every grass row's before/after pair, diffed and voted the same way Gen
+  -- 1's cutTile above votes -- the most common destination wins when two
+  -- rows disagree about what a shared tile id becomes.
+  local function gen2GrassSubst(tilesetId, tilesetDef)
+    local cached = gen2Subst[tilesetDef]
+    if cached then return cached end
+    local FieldMoves = require("src.world.gen2.FieldMoves")
+    local rows = FieldMoves.CUT_BLOCKS[tilesetId]
+    local votes, subst = {}, {}
+    if rows and tilesetDef.blocks then
+      for beforeId, row in pairs(rows) do
+        local afterId, animation = row[1], row[2]
+        if animation == 1 then      -- the grass swirl, not the tree-fall
+          local src, dst = tilesetDef.blocks[beforeId + 1], tilesetDef.blocks[afterId + 1]
+          if type(src) == "table" and type(dst) == "table" then
+            for i = 1, 16 do
+              if src[i] ~= dst[i] then
+                votes[src[i]] = votes[src[i]] or {}
+                votes[src[i]][dst[i]] = (votes[src[i]][dst[i]] or 0) + 1
+              end
+            end
+          end
+        end
+      end
+      for srcTile, dsts in pairs(votes) do
+        local best, bestN = nil, 0
+        for dstTile, n in pairs(dsts) do
+          if n > bestN then best, bestN = dstTile, n end
+        end
+        subst[srcTile] = best
+      end
+    end
+    gen2Subst[tilesetDef] = subst
+    return subst
+  end
+
+  -- Whichever grass row's "after" block the collision byte for a cut
+  -- quadrant should come from: the block actually being cut when CUT_BLOCKS
+  -- has a row for it, or any grass row otherwise -- a tileset's tall grass
+  -- collides the same way (COLL_TALL_GRASS or COLL_LONG_GRASS) wherever it
+  -- stands, so any row's answer is the right one for a block CUT_BLOCKS was
+  -- never told about.
+  local function gen2AfterIdFor(rows, blockId)
+    local row = rows[blockId]
+    if row and row[2] == 1 then return row[1] end
+    for _, r in pairs(rows) do
+      if r[2] == 1 then return r[1] end
+    end
+    return nil
+  end
+
+  -- Gen 1's cutBlock, generalised: a per-tile substitution instead of one
+  -- constant, and a collision quad appended alongside the tile block so the
+  -- two arrays -- which Map:cellCollision indexes by the SAME block id --
+  -- stay parallel. Returns nil when this cell's quadrant had no
+  -- substitutable tile in it, same as Gen 1's "cut what?".
+  local function gen2CutBlock(tilesetDef, blockId, qx, qy, subst, afterId)
+    gen2Synth[tilesetDef] = gen2Synth[tilesetDef] or {}
+    local cache = gen2Synth[tilesetDef]
+    local key = blockId .. ":" .. qx .. "," .. qy
+    local cached = cache[key]
+    if cached then return cached end
+
+    local srcTiles = tilesetDef.blocks[blockId + 1]
+    if type(srcTiles) ~= "table" then return nil end
+    local outTiles, changed = {}, false
+    for i = 1, 16 do outTiles[i] = srcTiles[i] end
+    for j = 0, 1 do
+      for i = 0, 1 do
+        local idx = (qy + j) * 4 + (qx + i) + 1
+        local dst = subst[outTiles[idx]]
+        if dst and dst ~= outTiles[idx] then
+          outTiles[idx] = dst
+          changed = true
+        end
+      end
+    end
+    if not changed then return nil end
+
+    -- qx/qy are TILE offsets (0 or 2, the 4x4 tile grid); the collision
+    -- quad is CELL-indexed (the 2x2 cell grid Map:cellCollision reads), so
+    -- halved back down to the 0/1 local position Map.lua:61-62 itself uses.
+    local srcQuad = tilesetDef.collision[blockId + 1]
+    local afterQuad = tilesetDef.collision[afterId + 1]
+    local outQuad = { srcQuad[1], srcQuad[2], srcQuad[3], srcQuad[4] }
+    local localIdx = (qy / 2) * 2 + (qx / 2) + 1
+    if afterQuad and afterQuad[localIdx] then outQuad[localIdx] = afterQuad[localIdx] end
+
+    tilesetDef.blocks[#tilesetDef.blocks + 1] = outTiles
+    tilesetDef.collision[#tilesetDef.collision + 1] = outQuad
+    local id = #tilesetDef.blocks - 1
+    cache[key] = id
+    return id
+  end
+
+  local function cutGrassAtGen2(cx, cy, map)
+    if not (map.isGrassCell and map:isGrassCell(cx, cy)) then return false end
+    local tilesetId = map.def and map.def.tileset
+    local tilesetDef = map.tileset
+    if not (tilesetId and tilesetDef and tilesetDef.blocks and tilesetDef.collision) then
+      return false
+    end
+    local FieldMoves = require("src.world.gen2.FieldMoves")
+    local rows = FieldMoves.CUT_BLOCKS[tilesetId]
+    if not rows then return false end
+
+    local subst = gen2GrassSubst(tilesetId, tilesetDef)
+    if not next(subst) then return false end
+
+    local bx, by = math.floor(cx / 2), math.floor(cy / 2)
+    local blockId = map:blockAt(bx, by)
+    local afterId = gen2AfterIdFor(rows, blockId)
+    if not afterId then return false end
+
+    local qx, qy = (cx % 2) * 2, (cy % 2) * 2
+    local id = gen2CutBlock(tilesetDef, blockId, qx, qy, subst, afterId)
+    if not id then return false end
+
+    local ok = mod.world and mod.world:replaceBlock(bx, by, id)
+    if not ok then return false end
+    remember(map.id, cx, cy)
+    -- No dust puff here: `World:runCut` plays one through its own script
+    -- callback, not through anything a live map edit can reach mid-step, and
+    -- there is no Gen 2 `startDustAnim` to borrow the way Gen 1's arm does.
+    -- The mod's own coloured particles do not depend on it (see "the puff is
+    -- not a grass thing" further down) and keep drawing regardless.
+    return true
+  end
+
+  local function cutGrassAt(game, cx, cy, quiet)
+    if isGen2Game(game) then
+      local world = game and game.world
+      local map = world and world.map
+      if not (map and map.def and map.tileset) then return false end
+      return cutGrassAtGen2(cx, cy, map)
+    end
+    return cutGrassAtGen1(game, cx, cy, quiet)
   end
 
   -- ------- the particles
@@ -660,7 +874,30 @@ return function(mod)
   -- stack -- or the trail would drift over a menu or a battle. `isOverworld`
   -- is read as truthy rather than compared to `true`: it is a marker, and
   -- what a marker is set TO is the engine's business, not ours.
+  --
+  -- Gold has no such marker to read, because Gold's overworld is not a stack
+  -- state at all -- `WorldAPI:overworld()` (src/world/gen2/WorldAPI.lua:39)
+  -- reads `game.world` directly, and `game.stack` only ever holds what is
+  -- PUSHED OVER it (a text box, a menu, a battle). So on a plain walk, with
+  -- nothing pushed, `states` is an empty table -- not nil, so the Gen 1
+  -- fallback above never fires -- and `states[#states]` is nil, which the
+  -- Gen 1 test below reads as "not the overworld" on every single frame
+  -- nothing is open. That hid the trail (and would have hidden the cut's
+  -- puff, had Gen 2 had one) on ordinary walking, which is a stronger gate
+  -- than Gen 1 ever had to clear.
+  --
+  -- `Game2:drawScene` already answers the question this needs, once a frame,
+  -- for its OWN letterbox payload: `frameWorldActive` is true exactly when
+  -- `World:draw()` painted the background this frame, and false the moment a
+  -- battle or a full-screen page takes the window instead (src/core/Game2
+  -- .lua:1454 the reset, :1578 the plain-overworld arm that sets it, :1301
+  -- where render.letterbox's own `worldActive` field is the same read).
+  -- `drawScene` always runs before `drawHud` in `Game2:draw` (:1372-1373 and
+  -- :1383), so the flag this frame's `render.hud` call sees is never stale.
   local function topIsOverworld(game)
+    if isGen2Game(game) then
+      return game.frameWorldActive and true or false
+    end
     local states = game and game.stack and game.stack.states
     if not states then return true end   -- nothing to gate on; do not vanish
     local top = states[#states]
@@ -870,6 +1107,12 @@ return function(mod)
     -- is what made flames and bolts read as "only over tall grass", where
     -- the dark tile behind them happened to give the particles an edge.
     -- Something you can see everywhere beats a purer palette.
+    -- `game.overworld` is a Gen 1 field with no Gen 2 counterpart -- Gold
+    -- hangs its world off `game.world` instead (WorldAPI.lua:39) -- so `ow`
+    -- is always nil here on Gold and every guard below answers false. That
+    -- is deliberate, not a gap this file should paper over: see "what
+    -- changes on Gold" near the top for why there is no puff to borrow
+    -- there, and why the coloured particles below do not need one.
     local kind = fxKind()
     local ow = game.overworld
     if kind ~= "off" and running and ow and ow.startDustAnim

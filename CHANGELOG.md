@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.6.0 — CUT GRASS and RUN FX, actually on Gold
+
+1.5.0 switched both of these off on Gold. That turned out to be about the
+wrong place to look, not a missing capability.
+
+- **BURN GRASS now cuts on Gold too.** Gold's own CUT does not read
+  `data.field.cutTreeSwaps` at all -- Gold's `field` registry never did, and
+  it never needed to. Gold's CUT reads `FieldMoves.CUT_BLOCKS`
+  (`src/world/gen2/FieldMoves.lua:262`), a per-tileset { facing block ->
+  replacement block, animation } table with no single tile id in it, and
+  swaps the whole 32×32 block once the text box closes.
+
+  The one-clod trick still applies, off different raw material: every GRASS
+  row (the swirl animation, not the falling tree) in a tileset's table has
+  its before/after 16-tile blocks diffed, and every tile that changed becomes
+  one entry in a source-tile -> destination-tile table -- Gen 1's single
+  `GRASS_TILE` constant, generalised to however many distinct grass tiles
+  Gold's edge and corner art actually uses. Unlike Gen 1, walkability on Gold
+  is a per-CELL collision byte keyed by BLOCK id, not a tile-id set, so a
+  synthesized block also needs a synthesized collision entry at the same new
+  id -- taken from the matching CUT_BLOCKS row's own "after" block, at the
+  same quadrant, which is the actual cart answer for what a real cut there
+  collides as.
+
+  Same guarantees as the Gen 1 arm: one clod per footstep, every cell of a
+  run cut with no holes, a grass block CUT_BLOCKS never named still cuts, and
+  the cut is written to `mod.save` and re-applied on re-entry.
+
+- **RUN FX now draws on Gold too.** The projection was never actually Gen 1
+  specific -- Gen 1's `OverworldController.lua:485` and Gold's
+  `World.lua:9928` both call the exact same `Camera:follow(p.px, p.py, viewW,
+  viewH)`, sized the same way (forced even, grown for tilt) on both sides.
+  What needed a Gen 2 arm was `topIsOverworld`: Gold's overworld is not a
+  stack state, so the Gen 1 test for "is it safe to draw" -- is the TOP of
+  the stack marked `isOverworld` -- always answered no on a plain walk with
+  nothing pushed over it, which is what actually stood the trail down.
+  `Game2:drawScene`'s own `frameWorldActive` flag (`src/core/Game2.lua:1454,
+  :1578`) answers the real question instead: did `World:draw()` paint the
+  background this frame.
+
+  One honest gap: the ENGINE's own dust puff behind a running step
+  (`OverworldState.startDustAnim`) has no Gen 2 backing at all -- Gold's
+  World has no such method. The coloured particles never depended on it and
+  carry the whole trail there on their own.
+
+- Suite coverage added against real Gen 2 engine modules: `src/world/gen2
+  /Map`, the real `World.changeBlock` / `World.replaceBlock`, and
+  `FieldMoves.CUT_BLOCKS` for the cut; `frameWorldActive` for the trail's
+  gate.
+
 ## 1.5.0 — it runs on Gold
 
 `"games": ["gen1", "gen2"]`. The speed itself crosses over unchanged: Gold

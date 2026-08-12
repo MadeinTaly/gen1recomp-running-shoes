@@ -369,7 +369,13 @@ local function overworldOn(map)
   return { isOverworld = true, map = map,
            player = { cellX = 0, cellY = 0, facing = "down" },
            replaceBlock = OverworldState.replaceBlock,
-           startDustAnim = OverworldState.startDustAnim }
+           -- Gen 1 only, and genuinely so: OverworldState.startDustAnim has
+           -- no Gen 2 backing (src/world/gen2/World.lua has no such method),
+           -- which is exactly why the Gen 2 cut below never calls it. This
+           -- fixture is never reached from the Gen 2 sub-test at the bottom
+           -- of this file, but guard it anyway rather than assume a helper
+           -- that has already moved once cannot move again.
+           startDustAnim = OverworldState and OverworldState.startDustAnim }
 end
 
 local MAP = freshMap()
@@ -812,6 +818,190 @@ do
     "runs on gen 2 (" .. tostring(gen2Run.mod and gen2Run.mod.skipReason) .. ")")
   T.eq(#gen2Run.errors, 0, "and loads on gen 2 with no boot errors")
   gen2Run.release()
+end
+
+-- ------- 1.6.0: BURN GRASS and RUN FX, actually running on Gold
+--
+-- Both used to switch themselves off the moment `save.generation == 2`.
+-- Driving them clean-loaded and asserting "no error" (above) cannot catch
+-- that -- it never asks either row to DO anything. These do, against real
+-- Gen 2 engine modules: `src/world/gen2/Map`, the real `World.changeBlock` /
+-- `World.replaceBlock` a stand-in world borrows exactly the way the Gen 1
+-- section above borrows `OverworldState.replaceBlock`, and `FieldMoves
+-- .CUT_BLOCKS`, the table Gold's own CUT reads.
+do
+  local D = T.fixtures.fresh()
+  setmetatable(D, { __index = function(_, k)
+    local v = Data[k]
+    if type(v) == "function" then return v end
+    return nil
+  end })
+  local run2 = T.sdk.loadMod(DIR, { data = D, generation = 2 })
+  T.eq(run2.mod and run2.mod.state, "loaded", "the Gen 2 fixture loads clean")
+  local loader2 = run2.loader
+
+  local Map2 = require("src.world.gen2.Map")
+  local FieldMoves2 = require("src.world.gen2.FieldMoves")
+  local World2 = require("src.world.gen2.World")
+
+  -- A tileset CUT_BLOCKS has never heard of on any real cart, built here
+  -- rather than borrowed off TILESET_KANTO so the fixture does not depend on
+  -- the ROM's own tile numbering. The row shape is CUT_BLOCKS' own
+  -- (src/world/gen2/FieldMoves.lua:262): { after block, animation }, 1 for
+  -- the grass swirl -- block 1 (all GRASS_TILE) cuts to block 2 (all
+  -- GROUND_TILE). Block 0 is a dummy never placed on the map: Map:cellCollision
+  -- (src/world/gen2/Map.lua:58) treats block id 0 as the cart's own "nothing
+  -- here" sentinel and answers COLL_WALL for it outright, same as a real
+  -- boot's border filler, so the fixture has to start its real blocks at 1
+  -- the way every extracted tileset does. Block 3 is ALSO grass and,
+  -- like the Gen 1 fixture's block 2 above, deliberately absent from the
+  -- table, so the "any grass row's collision answers for an unlisted block"
+  -- fallback in `gen2AfterIdFor` stays honest rather than untested.
+  local GRASS_TILE, GROUND_TILE = 5, 1
+  local COLL_TALL_GRASS, COLL_LAND = 0x18, 0x00
+  local function blockOf(tile)
+    local out = {}
+    for i = 1, 16 do out[i] = tile end
+    return out
+  end
+  local TILESET_ID = "TEST_TILESET_G2"
+  local TILESET2 = {
+    id = TILESET_ID,
+    blocks = { blockOf(GROUND_TILE), blockOf(GRASS_TILE), blockOf(GROUND_TILE),
+               blockOf(GRASS_TILE) },
+    collision = {
+      { COLL_LAND, COLL_LAND, COLL_LAND, COLL_LAND },                     -- id 0, unused
+      { COLL_TALL_GRASS, COLL_TALL_GRASS, COLL_TALL_GRASS, COLL_TALL_GRASS }, -- id 1
+      { COLL_LAND, COLL_LAND, COLL_LAND, COLL_LAND },                     -- id 2
+      { COLL_TALL_GRASS, COLL_TALL_GRASS, COLL_TALL_GRASS, COLL_TALL_GRASS }, -- id 3
+    },
+  }
+  FieldMoves2.CUT_BLOCKS[TILESET_ID] = { [1] = { 2, 1 } }
+
+  local function freshMap2(blockId)
+    local def = { id = "TEST_ROUTE", width = 4, height = 4, tileset = TILESET_ID,
+                  borderBlock = 0, blocks = {}, warps = {}, connections = {} }
+    for i = 1, def.width * def.height do def.blocks[i] = blockId or 1 end
+    return Map2.new(def, TILESET2)
+  end
+
+  -- Borrows the engine's own changeBlock / replaceBlock / refreshMapImages
+  -- rather than reimplementing them, so what is under test is the mod plus
+  -- the engine and not the mod plus a second opinion -- same principle as
+  -- the Gen 1 overworldOn() stand-in above.
+  local function worldOn(map)
+    return { map = map, blockEdits = {},
+             changeBlock = World2.changeBlock, replaceBlock = World2.replaceBlock,
+             refreshMapImages = World2.refreshMapImages }
+  end
+
+  local MAP2 = freshMap2()
+  local WORLD2 = worldOn(MAP2)
+  local STUB2 = { data = D, save = { generation = 2, options = { zoom = 0, tilt = 0 } },
+                  input = { isDown = function(_, btn) return btn == "b" end },
+                  world = WORLD2, stack = { states = {} } }
+  loader2.game = STUB2
+
+  local OPTS2 = {}
+  loader2.modOptions.running_shoes = OPTS2
+  local function setOpt2(key, value) OPTS2[key] = value end
+
+  local function speed2(frames, c) return Runtime.call("movement.speed", identity, frames, c) end
+  local function ctx2(opts)
+    opts = opts or {}
+    return { onBike = false, surfing = false,
+             input = { isDown = function(_, btn) return opts.b and btn == "b" end },
+             save = STUB2.save, player = opts.player }
+  end
+  local function tick2(game) Runtime.call("input.step", function() end, game or STUB2, 1 / 60) end
+
+  local runner2 = { px = 0, py = 0, facing = "down", moving = false }
+  local function stepOnto2(cx, cy, holdingB)
+    runner2.px, runner2.py = cx * 16, cy * 16
+    speed2(16, ctx2{ b = holdingB, player = runner2 })
+    tick2()
+    Runtime.emit("world.stepped", { mapId = "TEST_ROUTE", x = cx, y = cy })
+  end
+
+  T.check(MAP2:isGrassCell(2, 3), "the Gen 2 fixture map starts as tall grass")
+
+  setOpt2("burn", false)
+  stepOnto2(2, 3, true)
+  T.check(MAP2:isGrassCell(2, 3), "BURN GRASS off: running over Gen 2 grass leaves it standing")
+
+  setOpt2("burn", true)
+  stepOnto2(2, 3, false)
+  T.check(MAP2:isGrassCell(2, 3), "walking over Gen 2 grass leaves it standing")
+
+  stepOnto2(2, 3, true)
+  T.check(not MAP2:isGrassCell(2, 3),
+    "running over Gen 2 grass CUTS it: the cell is no longer grass")
+  T.check(MAP2:isGrassCell(3, 3), "the Gen 2 cell beside it is still grass")
+  T.check(MAP2:isGrassCell(2, 2), "the Gen 2 cell above it is still grass")
+  T.check(MAP2:isGrassCell(3, 2), "the Gen 2 cell diagonal to it is still grass")
+
+  -- the block itself changed, not merely the predicate: blockAt no longer
+  -- names the block the fixture map started every cell on
+  T.check(MAP2:blockAt(1, 1) ~= 1,
+    "the Gen 2 block under the cut cell is a new, synthesized id")
+
+  local saved2 = loader2.modSave.running_shoes and loader2.modSave.running_shoes.burnt
+  T.check(saved2 and saved2.TEST_ROUTE and saved2.TEST_ROUTE["2,3"] == true,
+    "the Gen 2 cut is recorded in mod.save too")
+
+  -- an unlisted grass block (block 3, absent from CUT_BLOCKS) still cuts,
+  -- the same "no holes down the path" guarantee the Gen 1 suite pins above
+  MAP2 = freshMap2(3)
+  WORLD2 = worldOn(MAP2)
+  STUB2.world = WORLD2
+  T.check(MAP2:isGrassCell(1, 1), "the unlisted Gen 2 grass block starts as grass")
+  stepOnto2(1, 1, true)
+  T.check(not MAP2:isGrassCell(1, 1),
+    "a Gen 2 grass block absent from CUT_BLOCKS is cut all the same")
+
+  -- re-entering the map re-applies what was cut, the same as the Gen 1 arm
+  MAP2 = freshMap2()
+  WORLD2 = worldOn(MAP2)
+  STUB2.world = WORLD2
+  T.check(MAP2:isGrassCell(2, 3), "a freshly loaded Gen 2 map starts uncut again")
+  tick2()
+  Runtime.emit("map.entered", { mapId = "TEST_ROUTE" })
+  T.check(not MAP2:isGrassCell(2, 3), "entering the Gen 2 map re-applies the cut")
+
+  setOpt2("burn", false)
+
+  -- ------- the trail's Gen 2 gate: frameWorldActive, not a stack marker
+  --
+  -- Gold has no isOverworld stack state (see topIsOverworld's Gen 2 arm in
+  -- main.lua), so this is the one part of the projection that is genuinely
+  -- generation-aware -- everything else is the shared Camera:follow math the
+  -- Gen 1 suite already measures the reach and taper of.
+  setOpt2("fx", "dust")
+  local drawn2 = 0
+  local realRect2 = love.graphics.rectangle
+  love.graphics.rectangle = function() drawn2 = drawn2 + 1 end
+  local VIEWPORT2 = { width = 640, height = 576, gameX = 0, gameY = 0,
+                      gameWidth = 640, gameHeight = 576, scale = 4, dpiX = 1, dpiY = 1 }
+  local runner3 = { px = 48, py = 64, facing = "down", moving = true }
+  speed2(16, ctx2{ b = true, player = runner3 })
+  for _ = 1, 8 do Runtime.call("input.step", function() end, STUB2, 1 / 60) end
+
+  STUB2.frameWorldActive = false
+  drawn2 = 0
+  Runtime.call("render.hud", function() end, STUB2, VIEWPORT2)
+  T.eq(drawn2, 0,
+    "RUN FX stands down on Gen 2 while frameWorldActive is false (a battle or a full page)")
+
+  STUB2.frameWorldActive = true
+  drawn2 = 0
+  Runtime.call("render.hud", function() end, STUB2, VIEWPORT2)
+  T.check(drawn2 > 0,
+    "RUN FX draws on Gen 2 once frameWorldActive says the world is really the background")
+
+  love.graphics.rectangle = realRect2
+  loader2.game = nil
+  FieldMoves2.CUT_BLOCKS[TILESET_ID] = nil
+  run2.release()
 end
 
 T.finish("running_shoes")

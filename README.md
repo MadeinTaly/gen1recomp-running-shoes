@@ -35,16 +35,32 @@ shorter when you hold B, and nothing else in the game moves.
 ## On Gold
 
 Runs on Pokémon Gold as well as Red, Blue and Yellow (`"games": ["gen1",
-"gen2"]`). **RUN SPEED**, **BOOST BIKE**, **BOOST SURF** and **SAFE GRASS**
-work there exactly as they do here — Gold's own `movement.speed` site carries
-the same keys, and it rebuilds the step duration every step, so a scripted
-cutscene can never inherit a running step the way it can on Gen 1.
+"gen2"]`), and as of 1.6.0 **every row works there**.
 
-**CUT GRASS** and **RUN FX** are Gen 1 only and switch themselves off on Gold,
-each saying so once in the log. The cut needs `field.cutTreeSwaps`, a table
-with no Gen 2 home and no Gen 2 reader; the trail is measured from the Gen 1
-world canvas, and rather than draw it in the wrong place it stands down until
-it has been checked in a real Gold boot.
+**RUN SPEED**, **BOOST BIKE**, **BOOST SURF** and **SAFE GRASS** work exactly
+as they do here — Gold's own `movement.speed` site carries the same keys, and
+it rebuilds the step duration every step, so a scripted cutscene can never
+inherit a running step the way it can on Gen 1.
+
+**BURN GRASS** and **RUN FX** used to switch themselves off on Gold. Both now
+run there too, off the engine's own Gen 2 material:
+
+- Gold's own CUT does not touch a tile — it swaps the whole 32×32 block the
+  facing tile sits in, out of `FieldMoves.CUT_BLOCKS`, a per-tileset table
+  with no single "this tile is grass" constant to key off the way Red's
+  OVERWORLD tileset allows. So the one-clod cut is built the same way there,
+  off a diff of that table's before/after blocks instead of a tile id, and it
+  also has to splice a new COLLISION entry alongside the new tile block,
+  because Gold's walkability is a per-cell byte indexed by block id rather
+  than a tile-id set.
+- The trail's projection was never actually Gen 1 specific — both games call
+  the same `Camera:follow` the same way — what needed a Gen 2 arm was knowing
+  whether the overworld was really on screen at all, since Gold's overworld
+  is not a stack state the way Gen 1's is.
+
+One honest gap remains: the ENGINE's own dust puff behind a running step has
+no Gen 2 backing at all, so on Gold the coloured particles carry the whole
+trail by themselves rather than riding on top of the puff.
 
 ## Install
 

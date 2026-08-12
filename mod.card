@@ -18,9 +18,10 @@ return {
       "BURN GRASS writes the cut cells into mod.save, so entering the map again re-applies what was cut",
     },
     known = {
-      "runs on Pokemon Gold: RUN SPEED, BOOST BIKE, BOOST SURF and SAFE GRASS all cross over, because Gold raises movement.speed with the same ctx keys and rebuilds the step duration every step",
-      "CUT GRASS is Gen 1 only: it swaps a block using field.cutTreeSwaps, and `field` is one of the six registries with no Gen 2 home -- its only readers are in OverworldController, which a Gold boot never loads",
-      "RUN FX is Gen 1 only for now: the trail is measured from the Gen 1 world canvas while Gold composites its own, so it stands down rather than draw in the wrong place",
+      "runs on Pokemon Gold, and every row works there: RUN SPEED, BOOST BIKE, BOOST SURF and SAFE GRASS all cross over unchanged, because Gold raises movement.speed with the same ctx keys and rebuilds the step duration every step",
+      "BURN GRASS on Gold reads FieldMoves.CUT_BLOCKS, the table Gold's own CUT reads -- a per-tileset block swap with no single tile id to key off, so the one-clod cut there is a block DIFF instead of a tile match, and it splices a new collision entry alongside the new tile block because Gold's walkability is per-cell, not per-tile-id",
+      "RUN FX on Gold uses the same Camera:follow projection Gen 1 does; the only Gen 2-specific part is knowing the overworld is really on screen, since Gold's overworld is not a stack state the way Gen 1's is",
+      "the engine's own dust puff behind a running step has no Gen 2 backing, so on Gold the coloured particles carry the whole trail on their own",
       "x2 is exactly the bicycle's own 8 frames, so at that setting your shoes have caught up with a vehicle -- this is a fact about Gen 1's bicycle, not a bug in the shoes",
       "the ladder stops at x4 because steps are whole frames: one rung further is 3 frames, then 2, then 1, at which point a tile passes in a sixtieth of a second and the walk cycle is a strobe",
       "it calls the next handler first and multiplies the answer, so a mod that slows you down in a swamp keeps its say",
