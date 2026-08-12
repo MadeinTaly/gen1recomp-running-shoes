@@ -254,9 +254,74 @@ return function(mod)
     return ok and value and true or false
   end
 
+  -- ------- which generation is running
+  --
+  -- Read off the live game rather than a version allow-list, which is the
+  -- one shape that excludes a mod from Gold by construction. `live` is the
+  -- game the hooks below are handed every logic tick; before the first one
+  -- arrives nothing that asks this has anything to do anyway.
+  local function isGen2()
+    local save = live and live.save
+    return save ~= nil and save.generation == 2
+  end
+
+  -- ------- what does NOT cross to Gold, and why
+  --
+  -- The speed itself does, unchanged: src/world/gen2/World.lua:8817 raises
+  -- `movement.speed` with the same ctx keys the Gen 1 site offers (and adds
+  -- `downhill` and `playerState`, because the Cycling Road already needed
+  -- them). Better still, Gold rewrites the base duration from scratch every
+  -- step -- World.lua:8787 for walking, :8807 for the bike, both BEFORE the
+  -- hook -- so the "put the number back" dance the Gen 1 arm has to do is
+  -- not merely unnecessary there, it has nothing to undo.
+  --
+  -- Two things do not cross, and are switched off rather than left to fail
+  -- in the picture:
+  --
+  --   CUT GRASS   cuts by swapping a block, and it finds the "after" id in
+  --               `data.field.cutTreeSwaps`. `field` is one of the six
+  --               registries with NO Gen 2 home, and its only two readers
+  --               in the whole engine are in src/world/OverworldController
+  --               .lua, which a Gold boot never loads. There is no table to
+  --               read and no reader to read it.
+  --
+  --   RUN FX      the trail is measured from the Gen 1 world canvas, and
+  --               Gold composites through Chrome.fitScale instead. Rather
+  --               than draw a plausible smear in the wrong place, it stands
+  --               down until it has been checked in a real Gold boot.
+  --
+  -- Both are Gen 1 features on a Gen 1+2 mod, which is the honest shape:
+  -- what works, works everywhere; what does not, says so once in the log
+  -- and stays out of the way.
+  -- Said once per boot. `once` further down is the trail's own latch and is
+  -- declared after this, so this keeps its own rather than reaching forward
+  -- to an upvalue that is still nil when a step first asks.
+  local saidGen1Only = {}
+  local function sayOnce(key, message)
+    if saidGen1Only[key] then return end
+    saidGen1Only[key] = true
+    pcall(function() mod.log:info(message) end)
+  end
+
+  local function cutOn()
+    if not enabled("burn") then return false end
+    if isGen2() then
+      sayOnce("cut", "CUT GRASS is Gen 1 only: field.cutTreeSwaps has no "
+        .. "Gen 2 home and no Gen 2 reader; leaving the grass standing")
+      return false
+    end
+    return true
+  end
+
   local function fxKind()
     local ok, value = pcall(function() return mod.options:get("fx") end)
     if not ok or type(value) ~= "string" then return "off" end
+    if isGen2() then
+      sayOnce("fx", "RUN FX is Gen 1 only for now: the trail is measured "
+        .. "from the Gen 1 world canvas and Gold composites its own; "
+        .. "standing down rather than drawing in the wrong place")
+      return "off"
+    end
     return RAMP[value] and value or "off"
   end
 
@@ -788,7 +853,7 @@ return function(mod)
     local game = live
     if not game then return end
 
-    if enabled("burn") and running then
+    if cutOn() and running then
       cutGrassAt(game, ev.x, ev.y)
     end
 
@@ -824,7 +889,7 @@ return function(mod)
   -- puff, because this is restoring a state rather than cutting anything.
   mod.events:on("map.entered", function(ev)
     local game, mapId = live, type(ev) == "table" and ev.mapId or nil
-    if not (game and mapId and enabled("burn")) then return end
+    if not (game and mapId and cutOn()) then return end
     local cells = burntCells(mapId, false)
     if not cells then return end
     for key in pairs(cells) do

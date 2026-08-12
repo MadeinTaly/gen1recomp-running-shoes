@@ -788,4 +788,30 @@ love.graphics.rectangle = realRect
 loader.game = nil
 
 run.release()
+
+-- ------- runs on Gen 2 as well
+--
+-- The manifest claims gen1+gen2, and a claim the loader does not honour is
+-- worse than no claim: on a Gold boot the mod would be listed and inert.
+-- The harness takes the generation directly and runs the real loader, so
+-- this is the gate itself answering. A skip is deliberately not an error,
+-- which is why the state is asserted and not merely the error count.
+--
+-- The dataset is built with methods-only inheritance: T.fixtures.fresh()
+-- otherwise reaches the already-loaded Data singleton through __index and
+-- the second load re-registers namespaces the fixture does not carry.
+do
+  local D = T.fixtures.fresh()
+  setmetatable(D, { __index = function(_, k)
+    local v = Data[k]
+    if type(v) == "function" then return v end
+    return nil
+  end })
+  local gen2Run = T.sdk.loadMod(DIR, { data = D, generation = 2 })
+  T.eq(gen2Run.mod and gen2Run.mod.state, "loaded",
+    "runs on gen 2 (" .. tostring(gen2Run.mod and gen2Run.mod.skipReason) .. ")")
+  T.eq(#gen2Run.errors, 0, "and loads on gen 2 with no boot errors")
+  gen2Run.release()
+end
+
 T.finish("running_shoes")

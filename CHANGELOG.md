@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.5.0 — it runs on Gold
+
+`"games": ["gen1", "gen2"]`. The speed itself crosses over unchanged: Gold
+raises `movement.speed` at `src/world/gen2/World.lua:8817` with the same ctx
+keys the Gen 1 site offers, and adds `downhill` and `playerState` because the
+Cycling Road already needed them. Gold also rewrites the base duration from
+scratch every step (`World.lua:8787` walking, `:8807` biking, both before the
+hook), so the "put the number back" work the Gen 1 arm does has nothing to undo
+there — scripted steps cannot inherit a running one.
+
+Crossing over: **RUN SPEED**, **BOOST BIKE**, **BOOST SURF**, **SAFE GRASS**.
+
+Gen 1 only, switched off on Gold rather than left to fail in the picture, each
+saying so once in the log:
+
+- **CUT GRASS** — the cut swaps a block and finds the "after" id in
+  `data.field.cutTreeSwaps`. `field` is one of the six registries with no Gen 2
+  home, and its only two readers in the engine live in
+  `src/world/OverworldController.lua`, which a Gold boot never loads. No table,
+  no reader.
+- **RUN FX** — the trail is measured from the Gen 1 world canvas and Gold
+  composites its own through `Chrome.fitScale`. It stands down rather than draw
+  a plausible smear in the wrong place; it comes back when it has been checked
+  in a real Gold boot.
+
 ## 1.4.2
 
 **The effects are drawn properly now.**
