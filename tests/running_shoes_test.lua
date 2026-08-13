@@ -790,6 +790,176 @@ speed(WALK, ctx{ b = false, player = runner })
 T.eq(hud(), 0, "with the trail off, a map full of cuts draws nothing over the frame")
 setOpt("burn", false)
 
+-- ------- 1.7.0: running inside a camera that took the walk away
+--
+-- The Dramatic Shape voxel mod's 1ST and 3RD rungs replace the grid walk
+-- with a continuous one (its lib/FreeMove.lua), and that walk never asks
+-- `movement.speed` -- there is no step duration to ask about. Every row of
+-- this mod went silent inside those cameras, which is issue #1.
+--
+-- What is under test here is the mod's side of the seam, so the other mod
+-- is stood in for by the two facts this one actually reads: a `mod.find`
+-- handle whose exports carry a `lib.require`, and a FreeMove table with the
+-- two speed constants and a tick that reads them. Standing it in rather
+-- than vendoring their file is the point -- if their numbers change, the
+-- arithmetic asserted below is still the arithmetic this mod does.
+do
+  local FM = {
+    WALK = 1.0,
+    BIKE = 2.0,
+    -- what the constants were WHILE the walk ran, which is the only moment
+    -- they are allowed to be anything but their own values
+    sawWalk = nil, sawBike = nil,
+  }
+  function FM.tick(state)
+    FM.sawWalk, FM.sawBike = FM.WALK, FM.BIKE
+    if FM.boom then error("boom", 0) end
+    local p = state.player
+    p.px = p.px + FM.WALK
+  end
+  local pristine = FM.tick
+
+  local V = { require = function(name)
+    if name == "FreeMove" then return FM end
+    error("no such module: " .. tostring(name), 0)
+  end }
+
+  loader.mods.DRAMATIC_SHAPE = {
+    manifest = { id = "DRAMATIC_SHAPE", version = "1.8.2" },
+    enabled = true, failed = false,
+  }
+  loader.exports.DRAMATIC_SHAPE = { lib = V }
+
+  -- B is held or not held on demand for this section, instead of the
+  -- always-down stub the rest of the file walks around with
+  local realInput = STUB.input
+  local bHeld, onBike = false, false
+  STUB.input = { isDown = function(_, btn) return bHeld and btn == "b" end }
+
+  tick()   -- the attach happens on a logic tick, not at load
+  T.neq(FM.tick, pristine, "the free-roam walk is wrapped once the other mod is found")
+
+  local free = { px = 0, py = 0, facing = "down", moving = false, surfing = false }
+  local function freeTick()
+    STUB.save.onBike = onBike
+    tick()
+    FM.sawWalk, FM.sawBike = nil, nil
+    FM.tick({ player = free })
+  end
+
+  setSpeed("2")
+
+  -- walking: the other mod's own numbers, untouched
+  bHeld = false
+  freeTick()
+  T.eq(FM.sawWalk, 1.0, "not running: the free walk keeps its own speed")
+
+  -- running: 16 frames a cell divided by two IS two pixels a frame
+  bHeld = true
+  freeTick()
+  T.eq(FM.sawWalk, 2.0, "holding B doubles the free walk at x2")
+  T.eq(FM.WALK, 1.0, "and the constant is put straight back afterwards")
+  T.eq(FM.BIKE, 2.0, "the bike constant too")
+
+  -- the floor is the same floor: MIN_FRAMES (4) frames a cell is 4 px a frame
+  setSpeed("4")
+  freeTick()
+  T.eq(FM.sawWalk, 4.0, "x4 lands exactly on the floor the grid arm keeps")
+
+  -- BOOST BIKE is opt-in here as well, and the bike is clamped by the same
+  -- floor rather than running away to eight pixels a frame
+  onBike = true
+  setOpt("bike", false)
+  freeTick()
+  T.eq(FM.sawWalk, 1.0, "on the bike with BOOST BIKE off, nothing is sped up")
+  T.eq(FM.sawBike, 2.0, "and the bike's own speed is left alone")
+  setOpt("bike", true)
+  freeTick()
+  T.eq(FM.sawBike, 4.0, "with BOOST BIKE on the bike is boosted, and clamped to the floor")
+  setOpt("bike", false)
+  onBike = false
+
+  -- BOOST SURF likewise, off the player the free walk is moving
+  free.surfing = true
+  setOpt("surf", false)
+  freeTick()
+  T.eq(FM.sawWalk, 1.0, "surfing with BOOST SURF off is not sped up")
+  setOpt("surf", true)
+  freeTick()
+  T.eq(FM.sawWalk, 4.0, "and is sped up once the row is on")
+  setOpt("surf", false)
+  free.surfing = false
+
+  -- ------- and the rest of the mod comes back with it
+  --
+  -- The speed was never the whole outage: CUT GRASS, SAFE GRASS and the
+  -- trail all read `running`, which only `movement.speed` used to set. The
+  -- free walk fires OverworldState:onStepComplete per cell crossed, so the
+  -- encounter roll below is the same call the engine makes there.
+  setSpeed("2")
+  setOpt("safe", true)
+  WORLD.player.cellX, WORLD.player.cellY = 3, 4
+
+  bHeld = false
+  freeTick()
+  T.check(roll() ~= nil, "SAFE GRASS: walking the free camera still meets Pokemon")
+
+  bHeld = true
+  freeTick()
+  T.eq(roll(), nil, "SAFE GRASS: running the free camera meets nothing")
+
+  -- and a manual grid step puts the free-camera readings back, so stepping
+  -- off the rung cannot leave the mod thinking it is still in one
+  speed(WALK, ctx{ b = false, player = runner })
+  T.check(roll() ~= nil, "a grid step clears what the free camera left behind")
+  setOpt("safe", false)
+
+  -- ------- the wrap must not eat somebody else's crash
+  --
+  -- The constants have to be restored on the way out of a throw as much as
+  -- on the way out of a return, and the throw itself belongs to whoever
+  -- raised it: swallowing another mod's error here would hide their bug
+  -- behind ours.
+  bHeld = true
+  FM.boom = true
+  STUB.save.onBike = false
+  tick()
+  T.raises(function() FM.tick({ player = free }) end, "boom",
+    "a throw out of the free walk is passed straight on, not swallowed")
+  T.eq(FM.sawWalk, 2.0, "the throwing walk did run at the boosted speed")
+  T.eq(FM.WALK, 1.0, "a throw out of the free walk still restores the walk constant")
+  T.eq(FM.BIKE, 2.0, "and the bike one")
+  FM.boom = false
+  bHeld = false
+
+  -- ------- and the other mod reloading must not strand the wrap
+  --
+  -- Reloading only the voxel mod hands out a fresh tick with our wrapper
+  -- nowhere in it. A "have we attached?" flag would say yes and sit there,
+  -- so the pair (their table, our wrapper) is what gets re-checked instead.
+  -- Its bookkeeping fields are deliberately left behind here: the unwind
+  -- must decline to fire, because the tick on the table is no longer ours
+  -- and putting our old inner back would throw the new one away.
+  local reloaded = false
+  FM.tick = function(state)
+    reloaded = true
+    FM.sawWalk, FM.sawBike = FM.WALK, FM.BIKE
+    state.player.px = state.player.px + FM.WALK
+  end
+  bHeld = true
+  freeTick()
+  T.check(reloaded, "a fresh tick from the other mod is the one that runs")
+  T.eq(FM.sawWalk, 2.0, "and it is wrapped again, rather than left behind a done flag")
+  T.eq(FM.WALK, 1.0, "with the constant restored as before")
+  bHeld = false
+
+  STUB.input = realInput
+  STUB.save.onBike = nil
+  loader.mods.DRAMATIC_SHAPE = nil
+  loader.exports.DRAMATIC_SHAPE = nil
+  setSpeed("2")
+end
+
 love.graphics.rectangle = realRect
 loader.game = nil
 

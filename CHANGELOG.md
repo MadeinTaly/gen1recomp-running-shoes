@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.7.0-beta.1 — the shoes work in first and third person
+
+**This is a prerelease.** It reaches into another mod's module to do its
+work, so the launcher will not offer it as an automatic update; install it
+deliberately if you want it. Everything it changes is inert unless the
+Dramatic Shape voxel mod is installed *and* one of its free cameras is up.
+
+Fixes [#1](../../issues/1): with the voxel mod installed, the shoes worked
+until you switched to the first- or third-person camera, where every row of
+this mod went quiet — no speed, no cut grass, no safe grass — and came back
+the moment you returned to the overhead view.
+
+**Why.** Those two cameras do not walk the grid. The voxel mod's
+`lib/FreeMove.lua` wraps `OverworldState:handleInput` and, while a free
+camera drives, replaces the grid step outright with a continuous
+camera-relative walk — a point in world pixels advanced by `FreeMove.WALK`
+(1.0) or `FreeMove.BIKE` (2.0) pixels a frame. The player's logical cell is
+kept honest and `onStepComplete` still fires once per cell crossed, so warps
+and encounters carry on — but there is no step duration any more, so
+`movement.speed` is never asked. That hook is not just where this mod's
+speed comes from; it is the only thing that sets the flag `BURN GRASS`,
+`SAFE GRASS` and the trail all read. One missing call, every row silent, and
+nothing in the log to say so.
+
+**The fix converts exactly.** Sixteen frames for a sixteen-pixel cell *is*
+one pixel a frame — which is why `FreeMove.WALK` is 1.0 in the first place.
+Dividing a step duration by your multiplier and multiplying a walk speed by
+it are the same sentence, so the ladder, the floor (x4, four frames a cell,
+four pixels a frame) and the `BOOST BIKE` / `BOOST SURF` gates are all the
+numbers the grid arm already keeps.
+
+- **RUN SPEED works in 1ST and 3RD**, at the multiplier you picked, with the
+  same floor and the same opt-in for the bicycle and for surfing.
+- **BURN GRASS and SAFE GRASS work there too**, because the running flag is
+  set again.
+- **The mod never hard-depends on the voxel mod.** It is declared as an
+  optional dependency and found through `mod.find`, on a logic tick rather
+  than at load, so enabling either mod mid-session works and neither one
+  missing costs the other anything.
+- **The wrap is honest about what it is.** The voxel mod publishes its module
+  namespace as `mod.exports.lib` for companion mods, which is how this
+  reaches `FreeMove`; wrapping `FreeMove.tick` on top of that is a
+  monkeypatch and is commented as one. It is confined to a single call — set
+  the two constants, run the original, put them back whether it returned or
+  threw — and a throw out of the voxel mod's own walk is passed straight on
+  rather than swallowed. If that module is ever restructured, the failure
+  mode is that running stops working inside those cameras, which is exactly
+  where it stood before this release.
+
+**RUN FX still does not draw under the voxel pipeline**, at any of its rungs
+including the overhead ones, and this release does not pretend otherwise.
+The trail is a screen-space overlay measured off the engine's 2D camera; it
+cannot follow a depth-buffered one, and drawing it anyway would put it
+somewhere you are not. The mod already stands it down whenever a
+world-replacing render pipeline is active and says so in the log once.
+
+Release plumbing: a semver prerelease now ships as a GitHub prerelease, so
+`ModUpdate.pickRelease` keeps auto-update on the last stable build.
+
 ## 1.6.0 — CUT GRASS and RUN FX, actually on Gold
 
 1.5.0 switched both of these off on Gold. That turned out to be about the

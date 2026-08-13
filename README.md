@@ -62,6 +62,28 @@ One honest gap remains: the ENGINE's own dust puff behind a running step has
 no Gen 2 backing at all, so on Gold the coloured particles carry the whole
 trail by themselves rather than riding on top of the puff.
 
+## With the Dramatic Shape voxel mod
+
+Its **1ST** and **3RD** cameras do not walk the grid — they replace the step
+with a continuous, camera-relative walk — so until 1.7.0 every row of this
+mod went quiet the moment you switched to one, and came back when you went
+back overhead ([#1](../../issues/1)).
+
+As of **1.7.0**, `RUN SPEED`, `BURN GRASS` and `SAFE GRASS` all work inside
+those cameras, at the multiplier you picked and with the same floor and the
+same opt-in for the bicycle and for surfing. Sixteen frames for a
+sixteen-pixel cell is one pixel a frame, so shortening a step and quickening
+a walk are the same arithmetic.
+
+The voxel mod is an **optional** dependency: neither mod needs the other, and
+enabling either one mid-session works.
+
+`RUN FX` is the exception, and it is not new: the trail is drawn over the
+finished 2D frame, and a screen-space overlay cannot follow a 3D camera. It
+stands down whenever a world-replacing render pipeline is active — which the
+voxel pipeline is at every rung, overhead included — and says so in the log
+once.
+
 ## Install
 
 Download `running_shoes-<version>.zip` from [Releases](../../releases),

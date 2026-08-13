@@ -18,6 +18,8 @@ return {
       "BURN GRASS writes the cut cells into mod.save, so entering the map again re-applies what was cut",
     },
     known = {
+      "works inside the Dramatic Shape voxel mod's 1ST and 3RD cameras as of 1.7.0: those replace the grid step with a continuous camera-relative walk that never asks movement.speed, which used to leave every row of this mod silent until you went back overhead. RUN SPEED, BURN GRASS and SAFE GRASS all come back; RUN FX does not, because a screen-space overlay cannot follow a 3D camera",
+      "the voxel mod is an OPTIONAL dependency, found through mod.find on a logic tick rather than at load, so neither mod needs the other and either can be enabled mid-session",
       "runs on Pokemon Gold, and every row works there: RUN SPEED, BOOST BIKE, BOOST SURF and SAFE GRASS all cross over unchanged, because Gold raises movement.speed with the same ctx keys and rebuilds the step duration every step",
       "BURN GRASS on Gold reads FieldMoves.CUT_BLOCKS, the table Gold's own CUT reads -- a per-tileset block swap with no single tile id to key off, so the one-clod cut there is a block DIFF instead of a tile match, and it splices a new collision entry alongside the new tile block because Gold's walkability is per-cell, not per-tile-id",
       "RUN FX on Gold uses the same Camera:follow projection Gen 1 does; the only Gen 2-specific part is knowing the overworld is really on screen, since Gold's overworld is not a stack state the way Gen 1's is",

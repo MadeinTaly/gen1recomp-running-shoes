@@ -384,6 +384,16 @@ return function(mod)
   -- input, so this is how it knows the player arrived running.
   local running = false
 
+  -- The same two facts, as the free-roam camera's continuous walk states
+  -- them: whether it covered ground on the tick just gone (there is no
+  -- `player.moving` to read there -- see "running under a camera that took
+  -- the walk away" further down), and how many frames a cell is costing at
+  -- the speed it is walking, which is the number the trail measures its
+  -- length in. Both nil/false on the grid, and put back that way by
+  -- `movement.speed` on every manual step.
+  local freeMoving = false
+  local freeFrames = nil
+
   -- The live Game, kept from the hook that is handed it every logic tick.
   -- `world.stepped` carries a payload and no game, and the cut needs the
   -- dataset and the running map; this is how it gets there.
@@ -758,7 +768,7 @@ return function(mod)
   -- back. A step covers one cell in `frames` ticks, so a particle standing
   -- still in the world is that many ticks behind per cell.
   local function lifeSpan()
-    local frames = ourFrames or 8
+    local frames = freeFrames or ourFrames or 8
     local life = math.floor(TRAIL_CELLS * frames + 0.5)
     if life < LIFE_MIN then life = LIFE_MIN end
     if life > LIFE_MAX then life = LIFE_MAX end
@@ -1061,6 +1071,148 @@ return function(mod)
     end
   end
 
+  -- ------- running under a camera that took the walk away
+  --
+  -- The Dramatic Shape voxel mod's 1ST and 3RD rungs do not walk the grid.
+  -- Its `lib/FreeMove.lua` wraps `OverworldState:handleInput` and, while a
+  -- free camera drives, replaces the walk outright with a continuous
+  -- camera-relative one: a point in world pixels advanced by `FreeMove.WALK`
+  -- (1.0) or `FreeMove.BIKE` (2.0) pixels a frame, with the player's logical
+  -- cell kept honest and `OverworldState:onStepComplete` fired once per cell
+  -- crossed -- so warps, encounters and step counters all still happen.
+  --
+  -- What does NOT happen is `movement.speed`. There is no step duration to
+  -- ask about, because there is no step: the hook this whole mod is built on
+  -- is never called while that camera is up. And it is not only the speed
+  -- that goes with it -- CUT GRASS, SAFE GRASS and the trail all read
+  -- `running`, and `movement.speed` is the only thing that ever sets it. So
+  -- every row of the mod went quiet the moment the camera came off the
+  -- ceiling, silently and with nothing in the log. That is issue #1.
+  --
+  -- The fix has to be paid in the currency the free walk deals in, and it
+  -- converts exactly: sixteen frames for a sixteen-pixel cell IS one pixel a
+  -- frame, which is why `FreeMove.WALK` is 1.0 in the first place. Dividing
+  -- a step duration by f and multiplying a walk speed by f are the same
+  -- sentence, and the floor is the same floor -- `MIN_FRAMES` frames per
+  -- cell is 16/`MIN_FRAMES` pixels a frame -- so the ladder, the bike and
+  -- surf gates, and the point at which the animation stops reading as
+  -- walking are all the numbers the grid arm already argues for above.
+  --
+  -- The seam into that mod is its own front door: it publishes its module
+  -- namespace as `mod.exports.lib` so that "a companion mod can pin its own
+  -- tiles' shapes or read the camera without reaching into this mod's file
+  -- layout", and `mod.find` (src/mods/Loader.lua:1071) is the engine's way
+  -- to reach it -- a handle or nil, never a hard dependency.
+  --
+  -- Wrapping `FreeMove.tick` is NOT a front door, and is declared as what it
+  -- is: a monkeypatch, the third rung of the ladder. It is confined to one
+  -- call -- set the two constants, run the original, put them back whatever
+  -- happened -- so if that module is ever restructured the failure mode is
+  -- that running stops working inside the voxel camera, which is precisely
+  -- where it stands today. Nothing else in this file depends on it.
+  --
+  -- One thing genuinely does not come back, and is not faked: RUN FX. The
+  -- trail is a screen-space overlay measured off `Camera:follow`, and
+  -- `flatWorld` above already stands it down whenever a render pipeline owns
+  -- the world pass -- which the voxel pipeline does, at every rung including
+  -- the overhead ones. A 2D overlay cannot follow a depth-buffered camera,
+  -- and drawing it anyway would put the trail somewhere the player is not.
+  local FREE_CAM_MOD = "DRAMATIC_SHAPE"
+
+  -- The table we wrapped and the wrapper we put on it. Held as a PAIR, and
+  -- re-checked every tick rather than latched on a "done" flag, because
+  -- either half can go stale on its own: reloading the other mod hands out a
+  -- fresh FreeMove (or a fresh tick on the same table), and reloading THIS
+  -- one rebuilds these two as nil while its old wrapper is still installed
+  -- over there. Two table reads a tick buys correctness across both.
+  local freeTable, freeWrap = nil, nil
+
+  local function freeCamAttach()
+    if freeTable and freeTable.tick == freeWrap then return true end
+    if type(mod.find) ~= "function" then return false end
+    local handle = mod.find(FREE_CAM_MOD)
+    local lib = handle and handle.exports and handle.exports.lib
+    if type(lib) ~= "table" or type(lib.require) ~= "function" then return false end
+
+    local ok, FreeMove = pcall(lib.require, "FreeMove")
+    if not (ok and type(FreeMove) == "table"
+            and type(FreeMove.tick) == "function"
+            and tonumber(FreeMove.WALK) and tonumber(FreeMove.BIKE)) then
+      return false
+    end
+
+    -- Unwind our own previous wrap before putting a new one on: reloading
+    -- this mod rebuilds the closure while that module keeps its table, and
+    -- two of these stacked would multiply the speed twice. Only ever unwind
+    -- a wrapper that is still the CURRENT tick and is one of ours -- if
+    -- somebody else has wrapped since, theirs is the tick, and putting our
+    -- old inner back would throw their work away.
+    if FreeMove.runningShoesTick ~= nil
+       and FreeMove.tick == FreeMove.runningShoesTick
+       and FreeMove.runningShoesInner ~= nil then
+      FreeMove.tick = FreeMove.runningShoesInner
+    end
+    local inner = FreeMove.tick
+
+    local wrapper
+    wrapper = function(state)
+      local player = state and state.player
+      local px, py = player and player.px, player and player.py
+      if player then anchor = player end
+
+      -- Read the two constants fresh rather than caching them at attach:
+      -- they are that mod's numbers to change, and restoring a cached copy
+      -- would quietly undo a change it made after we arrived.
+      local baseWalk, baseBike = FreeMove.WALK, FreeMove.BIKE
+
+      local input = live and live.input
+      local onBike = live and live.save and live.save.onBike
+      local held = input and input.isDown and input:isDown("b")
+      local f = 1
+      if held
+         and not (onBike and not enabled("bike"))
+         and not (player and player.surfing and not enabled("surf")) then
+        f = factor()
+      end
+
+      if f > 1 then
+        local cap = 16 / MIN_FRAMES      -- the floor, in pixels a frame
+        local walk = math.min(baseWalk * f, cap)
+        local bike = math.min(baseBike * f, cap)
+        -- Never hand back something slower than we were given, the same
+        -- promise the movement.speed arm makes to a mod that got there first.
+        FreeMove.WALK = math.max(walk, baseWalk)
+        FreeMove.BIKE = math.max(bike, baseBike)
+        running = true
+        -- Off the BOOSTED speed on purpose: this is how long a cell is
+        -- about to take, which is the number the trail measures its length
+        -- in cells against (see lifeSpan).
+        freeFrames = math.floor(16 / (onBike and FreeMove.BIKE or FreeMove.WALK) + 0.5)
+      else
+        running = false
+        freeFrames = nil
+      end
+
+      local okTick, err = pcall(inner, state)
+
+      FreeMove.WALK, FreeMove.BIKE = baseWalk, baseBike
+
+      -- There is no `player.moving` to read here: the free walk leaves that
+      -- false and moves px/py itself. Whether it covered ground IS the
+      -- comparison, and it is what the trail's spawn gate asks for.
+      freeMoving = player ~= nil and (player.px ~= px or player.py ~= py)
+
+      if not okTick then error(err, 0) end
+    end
+
+    FreeMove.tick = wrapper
+    FreeMove.runningShoesTick, FreeMove.runningShoesInner = wrapper, inner
+    freeTable, freeWrap = FreeMove, wrapper
+    mod.log:info("free-roam camera found (%s %s); the shoes work inside it too",
+      tostring(handle.id), tostring(handle.version))
+    return true
+  end
+
   -- ------- wiring
 
   -- A cutscene queues its moves right after this fires, which closes the
@@ -1154,6 +1306,12 @@ return function(mod)
     live = game
     if tracked and not tracked.moving then restore() end
 
+    -- Attached from here rather than at load, because load order is not
+    -- ours to pick: `mod.find` answers nil until the other mod has run, and
+    -- a mod the player enables mid-session has not run at load at all. A
+    -- miss is one table lookup and a nil test.
+    freeCamAttach()
+
     advance()
     ticks = ticks + 1
     if ticks > 600 and hudCalls == 0 then
@@ -1161,7 +1319,7 @@ return function(mod)
         .. "render.hud hook. Update Gen1Recomp; the speed rows are unaffected.")
     end
     local kind = fxKind()
-    if kind ~= "off" and anchor and anchor.moving and running then
+    if kind ~= "off" and anchor and (anchor.moving or freeMoving) and running then
       -- B is re-read here rather than trusted from the step that started:
       -- a scripted walk never asks `movement.speed`, so without this the
       -- last run's flag would trail the player through a cutscene.
@@ -1173,7 +1331,7 @@ return function(mod)
       else
         once("nob", "RUN FX: running step, but B is not down at tick time")
       end
-    elseif kind == "off" and running and anchor and anchor.moving then
+    elseif kind == "off" and running and anchor and (anchor.moving or freeMoving) then
       once("fxoff", "RUN FX: the RUN FX row is OFF")
     end
     return out
@@ -1191,6 +1349,11 @@ return function(mod)
     -- this the honest place to answer both "is the player running?" and
     -- "which player?" -- and to answer NO the moment he stops.
     running = false
+    -- A manual step is proof the grid has the walk back, so the free-roam
+    -- camera's two readings stop being true of anything. Cleared here rather
+    -- than on the way out of that camera, because there is no event for
+    -- that: the free walk simply stops being called.
+    freeMoving, freeFrames = false, nil
     if ctx.player then anchor = ctx.player end
 
     local input = ctx.input
