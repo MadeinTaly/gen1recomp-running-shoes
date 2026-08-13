@@ -1,11 +1,11 @@
 # Changelog
 
-## 1.7.0-beta.1 — the shoes work in first and third person
+## 1.7.0 — the shoes work in first and third person
 
-**This is a prerelease.** It reaches into another mod's module to do its
-work, so the launcher will not offer it as an automatic update; install it
-deliberately if you want it. Everything it changes is inert unless the
-Dramatic Shape voxel mod is installed *and* one of its free cameras is up.
+Everything below is inert unless the Dramatic Shape voxel mod is installed
+*and* one of its free cameras is up. It went out as `1.7.0-beta.1` first and
+is promoted here on a confirmed run of the two mods together, which is the
+only test that counts for a cross-mod fix.
 
 Fixes [#1](../../issues/1): with the voxel mod installed, the shoes worked
 until you switched to the first- or third-person camera, where every row of
@@ -56,8 +56,9 @@ cannot follow a depth-buffered one, and drawing it anyway would put it
 somewhere you are not. The mod already stands it down whenever a
 world-replacing render pipeline is active and says so in the log once.
 
-Release plumbing: a semver prerelease now ships as a GitHub prerelease, so
-`ModUpdate.pickRelease` keeps auto-update on the last stable build.
+Release plumbing, kept from the beta: a semver prerelease now ships as a
+GitHub prerelease, so `ModUpdate.pickRelease` keeps auto-update on the last
+stable build rather than moving everybody onto an untried one.
 
 ## 1.6.0 — CUT GRASS and RUN FX, actually on Gold
 
