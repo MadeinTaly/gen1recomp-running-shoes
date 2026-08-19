@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.7.1 — the trail goes behind you, and looks like something
+
+Reported from play: running rightwards drew the trail on top of the
+character. `render.hud` composites over the **finished** frame, so anything
+this mod draws inside the player's own 16×16 sprite box is drawn on him
+rather than behind him — and the trail was shed at his centre and drifted out
+from there, which put its freshest and brightest marks squarely on the
+sprite. It reads worst on whichever side the character art happens to reach
+the trailing edge, which is why one direction looked fine and the other did
+not.
+
+Two changes, and the second is the one that makes it a guarantee:
+
+- **The trail is shed a cell and a quarter behind the heels**, along the
+  direction of travel, instead of at the player's own centre. One cell only
+  just cleared the sprite and still read as crowding him on the way right.
+- **Nothing is drawn inside the sprite's box, ever.** The box is grown by how
+  far the particle reaches from its own centre before the test is made —
+  asymmetrically, because a bolt is a jagged line climbing eleven pixels
+  *upward* from its base where a puff of smoke reaches four in every
+  direction, and a guard written around the centre alone lets exactly that
+  case through. The suite now pins this across all four directions and all
+  three kinds: twelve runs, zero marks on the character.
+
+**And the particles are no longer boxes.** They used to be four rectangles —
+two crossed bars whose overlap knocked the corners off a square, the body
+inset in that, a lit square for the core. Round at a glance, obviously a box
+the moment you looked at one.
+
+They are drawn as **rows** now: one filled rectangle per scanline, its width
+read out of a shape table, so the outline is whatever curve the table
+describes.
+
+| | |
+| --- | --- |
+| `DUST` | a real disc, shaded in three bands, highlight up top where a puff catches the light |
+| `FLAMES` | a teardrop — pinched to a point at the tip, widest about two thirds down, rounded off at the base, with the lit core low where a flame is hottest |
+| `BOLTS` | thick where it leaves the ground and a hair at its tip, instead of the same width the whole climb |
+
+The shape tables are computed once at load, so the per-frame cost is one
+draw call per row rather than per pixel: a six-pixel puff is twelve
+rectangles where the old blob was four, and the old one was not round.
+
+No new options, no change to the colour ramps, and nothing outside the
+`RUN FX` row moves.
+
 ## 1.7.0 — the shoes work in first and third person
 
 Everything below is inert unless the Dramatic Shape voxel mod is installed

@@ -1,7 +1,7 @@
 {
   "id": "running_shoes",
   "name": "Running Shoes",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "api": 2,
   "games": [
     "gen1",

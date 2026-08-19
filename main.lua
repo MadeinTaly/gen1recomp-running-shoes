@@ -184,6 +184,52 @@ local RAMP = {
   },
 }
 
+-- ------- the silhouettes
+--
+-- A particle used to be four rectangles: two crossed bars whose overlap
+-- knocked the corners off a square, the body inset in that, and a lit
+-- square for the core. It read as round at a glance and as a box the moment
+-- you stopped to look at one, which is not what a puff of smoke or a tongue
+-- of flame is shaped like.
+--
+-- These are ROWS instead. One filled rectangle per scanline, its width read
+-- out of a shape table, so the outline is whatever curve the table
+-- describes and the fill still costs one draw call per row rather than one
+-- per pixel. A puff is a DISC. A flame is a TEARDROP -- pinched to a point
+-- at the tip, widest about two thirds of the way down, rounded off at the
+-- base -- so it reads as a flame from its outline alone, standing still, in
+-- a single frame.
+--
+-- Widths are worked out once at load and never again: a disc row is a
+-- square root, and a square root per row per particle per frame is the one
+-- cost a decoration cannot run up. Indexed by diameter, so `DISC[6][3]` is
+-- how wide the third row of a six-pixel puff is.
+local DISC, TEAR = {}, {}
+for d = 1, 8 do
+  local r, disc, tear = d / 2, {}, {}
+  -- where the teardrop is at its widest: about two thirds down, which is
+  -- where a flame's shoulder sits before it rounds into its base
+  local waist = d * 0.68
+  for i = 0, d - 1 do
+    local mid = i + 0.5
+    local dy = mid - r
+    disc[i + 1] = math.max(1, math.floor(math.sqrt(math.max(0, r * r - dy * dy)) * 2 + 0.5))
+    local w
+    if mid <= waist then
+      -- the pinch: a power curve rather than a straight line, so the tip is
+      -- a point and the shoulder is a shoulder instead of a triangle
+      w = d * (mid / waist) ^ 0.62
+    else
+      -- and the base is a quarter-circle off the same radius, so the bottom
+      -- is round rather than chopped
+      local t = (mid - waist) / math.max(0.5, d - waist)
+      w = d * math.sqrt(math.max(0, 1 - t * t * 0.72))
+    end
+    tear[i + 1] = math.max(1, math.floor(w + 0.5))
+  end
+  DISC[d], TEAR[d] = disc, tear
+end
+
 -- ------- how long a trail is
 --
 -- Measured in CELLS OF GROUND rather than in frames, because frames are
@@ -206,6 +252,43 @@ local LIFE_MIN, LIFE_MAX = 10, 96
 -- width of the cell, so the trail is a band with texture in it rather than
 -- a dotted line down the middle.
 local PER_TICK = 2
+
+-- ------- and where it is shed
+--
+-- Behind the HEELS, not under the middle of the sprite. The trail used to
+-- spawn at the player's own centre and drift out from there, which put its
+-- freshest and brightest marks inside the sprite's own 16x16 box -- and
+-- because `render.hud` composites over the finished frame, inside that box
+-- means ON TOP OF THE CHARACTER rather than behind him. It reads as the
+-- effect covering the player's face on the sides where his art happens to
+-- reach the trailing edge, which is why running rightwards was reported as
+-- broken and running leftwards was not.
+--
+-- A cell and a quarter back along the direction of travel. Eight world
+-- pixels reaches the sprite's trailing edge from the spawn point at its
+-- centre, and the particle's own half width plus the jitter eats most of
+-- what is left -- so sixteen only just cleared the box, and on a play test
+-- the trail still read as crowding the character on the way right. Twenty
+-- puts daylight between the two, which is what it wanted.
+local BEHIND = 20
+
+-- The sprite's own box, relative to the cell origin the camera is anchored
+-- on: `SpriteRenderer:draw` puts a 16x16 frame at (px, py - 4)
+-- (src/world/OverworldController.lua:89), so the character occupies px..px+16
+-- across and py-4..py+12 down. Nothing of ours may draw inside it.
+local SPRITE_W, SPRITE_TOP, SPRITE_BOT = 16, -4, 12
+
+-- How far a particle reaches from its own centre, which is what the box has
+-- to be grown by before asking whether the mark is on the character: a
+-- CENTRE outside the sprite says nothing when the rows around it are drawn
+-- four pixels out. A puff and a flame are symmetric; a bolt is a jagged line
+-- climbing BOLT_JOINTS * BOLT_RISE pixels UPWARD from its base, so it
+-- reaches far above its centre and barely at all below.
+local REACH = {
+  dust = { x = 4, up = 4, down = 4 },
+  fire = { x = 4, up = 5, down = 5 },
+  bolt = { x = 5, up = 11, down = 1 },
+}
 
 -- How long the engine's own dust puff is held behind a running player.
 -- `startDustAnim` hands out 32 frames, which is right for a boulder being
@@ -790,9 +873,10 @@ return function(mod)
     particles[#particles + 1] = {
       kind = kind,
       -- `px`,`py` is the top-left of the 16x16 cell, so +8/+12 is about
-      -- where the feet are
-      x = player.px + 8 + ax * spread + (rnd() * 3 - 1.5),
-      y = player.py + 12 + ay * spread + (rnd() * 3 - 1.5),
+      -- where the feet are -- and then BEHIND back along the way he is
+      -- going, which is what keeps the mark out of his own sprite box
+      x = player.px + 8 - d[1] * BEHIND + ax * spread + (rnd() * 3 - 1.5),
+      y = player.py + 12 - d[2] * BEHIND + ay * spread + (rnd() * 3 - 1.5),
       -- Barely any drift: a trail is something LEFT BEHIND, so it stays
       -- where it was shed and the player runs away from it. Give it a push
       -- backwards as well and the far end races the player, which is what
@@ -990,33 +1074,63 @@ return function(mod)
 
     -- ------- the trail
     --
-    -- A particle is no longer one filled square. It is a rim, a body and a
-    -- lit core -- three shades off the same ramp -- laid out as four
-    -- rectangles: two crossed bars whose overlap is a square with its
-    -- corners knocked off, then the body inset inside that, then the core.
+    -- A particle is a rim, a body and a lit core -- three shades off the
+    -- same ramp window -- laid on as three passes of NARROWING ROWS over one
+    -- of the shape tables at the top of this file: the rim draws the whole
+    -- outline, the body the same rows inset a pixel so the rim survives as
+    -- an edge, the core inset two more over the band of rows where the thing
+    -- is actually bright.
     --
-    -- Four rectangles rather than a per-pixel mask on purpose. This runs
-    -- once per particle per frame on a phone, and a 7x7 mask at seventy
-    -- live particles is three thousand draw calls a frame for a decoration.
-    -- The corners are what the eye reads as "round"; everything else is
-    -- shading.
-    local function blob(p, w, h, rim, body, core, alpha, coreBias)
-      local x, y = p.x - w / 2, p.y - h / 2
+    -- Rows rather than a per-pixel mask, for the same reason the four
+    -- rectangles this replaces were four: it runs once per particle per
+    -- frame on a phone, and a 7x7 mask at seventy live particles is three
+    -- thousand draw calls for a decoration. A six-pixel puff is twelve, and
+    -- unlike the four it is actually round.
+    local function shaded(shape, cx, top, rim, body, core, alpha, lit)
+      local n = #shape
       love.graphics.setColor(rim[1], rim[2], rim[3], alpha)
-      put(x + 1, y, w - 2, h)            -- corners off the top and bottom
-      put(x, y + 1, w, h - 2)            -- and off the sides
-      if w >= 4 and h >= 4 then
+      for i = 1, n do
+        local w = shape[i]
+        put(cx - w / 2, top + i - 1, w, 1)
+      end
+      if n >= 4 then
         love.graphics.setColor(body[1], body[2], body[3], alpha)
-        put(x + 1, y + 1, w - 2, h - 2)
+        for i = 2, n - 1 do
+          local w = shape[i] - 2
+          if w >= 1 then put(cx - w / 2, top + i - 1, w, 1) end
+        end
       end
-      if w >= 5 and h >= 5 then
-        -- The lit core sits off centre: a flame is hottest at its base and
-        -- a puff of smoke catches the light on top, so one number moves the
-        -- highlight to where the thing is actually bright.
-        local cw = math.max(1, math.floor(w / 3))
+      if n >= 5 then
+        -- The lit core sits where the thing is actually bright rather than
+        -- in the middle: low in a flame, which is hottest at its base, high
+        -- in a puff of smoke, which catches the light on top. `lit` says
+        -- which row, as a fraction of the height.
         love.graphics.setColor(core[1], core[2], core[3], alpha)
-        put(p.x - cw / 2, p.y - cw / 2 + coreBias, cw, cw)
+        local at = math.floor(lit * n + 0.5)
+        for i = math.max(2, at - 1), math.min(n - 1, at + 1) do
+          local w = shape[i] - 4
+          if w >= 1 then put(cx - w / 2, top + i - 1, w, 1) end
+        end
       end
+    end
+
+    -- Nothing of ours draws inside the player's own 16x16 sprite box.
+    -- `render.hud` composites over the finished frame, so a mark inside that
+    -- box is a mark ON the character, not behind him. Shedding the trail
+    -- BEHIND him (see the BEHIND constant) keeps it clear on its own in
+    -- three directions out of four; this is the backstop for the fourth,
+    -- walking DOWN, where "behind" is "over his head", and for anything that
+    -- drifts back in afterwards.
+    local function onSprite(p)
+      local r = REACH[p.kind] or REACH.dust
+      -- Grown by the particle's own reach, and asymmetrically: a mark ABOVE
+      -- the box can still put pixels in it by reaching DOWN, and one below
+      -- by reaching up, so each edge is pushed out by the reach that crosses
+      -- it rather than by one number for all four.
+      return p.x >= player.px - r.x
+         and p.x <= player.px + SPRITE_W + r.x
+         and p.y >= player.py + SPRITE_TOP - r.down
+         and p.y <= player.py + SPRITE_BOT + r.up
     end
 
     for i = 1, #particles do
@@ -1029,7 +1143,9 @@ return function(mod)
       local alpha = 0.30 + 0.70 * (p.life / p.max)
       local age = p.max - p.life
 
-      if p.kind == "bolt" then
+      if onSprite(p) then                     -- behind the player, or not at all
+        -- nothing
+      elseif p.kind == "bolt" then
         -- Lit on alternate ticks, and re-drawn to a different jag each
         -- time: a spark that burns steadily in one shape for ten frames is
         -- a lamp, not lightning.
@@ -1043,24 +1159,32 @@ return function(mod)
             local nx, ny = x + kick, y - BOLT_RISE
             local shade = j <= 2 and core or (j <= 4 and body or rim)
             love.graphics.setColor(shade[1], shade[2], shade[3], alpha)
-            -- one rectangle per joint, spanning the gap it just crossed
-            put(math.min(x, nx), ny, math.abs(kick) + size, BOLT_RISE + 1)
+            -- one rectangle per joint, spanning the gap it just crossed,
+            -- and thinning as it climbs: a bolt is thick where it leaves
+            -- the ground and a hair at its tip, which is the difference
+            -- between lightning and a ladder
+            put(math.min(x, nx), ny,
+                math.abs(kick) + math.max(1, size + 2 - j), BOLT_RISE + 1)
             x, y = nx, ny
           end
           drew = drew + 1
         end
       elseif p.kind == "fire" then
-        -- A tongue rather than a ball: taller than it is wide, and it
-        -- narrows as it dies, so a flame goes out rather than shrinking.
-        blob(p, math.max(1, size - 1), size + 1, rim, body, core, alpha, 1)
+        -- A tongue rather than a ball, and now shaped like one: the
+        -- teardrop is pinched to a point at the tip and rounded at the
+        -- base, so a flame reads as a flame in a single still frame. The
+        -- lit core sits low, where a flame is hottest.
+        local h = math.min(8, size + 1)
+        shaded(TEAR[h], p.x, p.y - h / 2, rim, body, core, alpha, 0.80)
         drew = drew + 1
       else
         -- Smoke sways as it rises. The sway comes off the particle's age
         -- and its own seed, so no two puffs lean the same way at the same
-        -- time and none of it needs storing.
+        -- time and none of it needs storing. A disc rather than a boxy
+        -- blob, with the highlight up top where a puff catches the light.
         local sway = math.sin(age * 0.22 + p.seed) * 1.6
-        local at = { x = p.x + sway, y = p.y }
-        blob(at, size, size, rim, body, core, alpha, -1)
+        local d = math.min(8, size)
+        shaded(DISC[d], p.x + sway, p.y - d / 2, rim, body, core, alpha, 0.30)
         drew = drew + 1
       end
     end

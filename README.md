@@ -124,16 +124,24 @@ on any ground — not just over tall grass.
 
 | | |
 | --- | --- |
-| `DUST` | smoke — greys, swaying as it rises, its highlight up top where a puff catches the light. |
-| `FLAMES` | a tongue rather than a ball: taller than it is wide, its lit core low where a flame is hottest, narrowing as it dies. |
-| `BOLTS` | a jagged line of five joints, re-picked every other frame so it crackles into a new shape instead of blinking. |
+| `DUST` | smoke — a disc, greys, swaying as it rises, its highlight up top where a puff catches the light. |
+| `FLAMES` | a teardrop: pinched to a point at the tip, widest about two thirds down, rounded at the base, its lit core low where a flame is hottest. |
+| `BOLTS` | a jagged line of five joints, thick where it leaves the ground and a hair at its tip, re-picked every other frame so it crackles into a new shape instead of blinking. |
 
 Each particle is a shaded sprite rather than a coloured square: a dark rim,
-a body and a lit core, laid out as a square with its corners knocked off.
+a body and a lit core, drawn as one filled row per scanline off a shape
+table, so the outline is a real curve rather than a box with its corners
+knocked off.
+
 All three shades come off **one five-step ramp per kind**, and a particle
 draws from a three-shade *window* onto it — the window sliding down the
 ramp as the particle ages, so a flame starts white-yellow and ends an ember
 without any colour ever being interpolated.
+
+The trail is shed **a cell and a quarter behind your heels**, and nothing it
+draws is ever allowed inside your own sprite's box — `RUN FX` composites over
+the finished frame, so a mark in that box would be a mark *on* the character
+rather than behind him.
 
 Every kind also leaves the engine's own dust puff on the cell you have just
 left — the same animation `CUT` leaves on grass. That is drawn in the world

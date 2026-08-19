@@ -9,7 +9,8 @@ return {
     added = {
       "holding B shortens a step, at a multiplier you choose: x1.5, x2, x3 or x4",
       "BOOST BIKE and BOOST SURF, both off by default",
-      "RUN FX: a trail off your heels while you run -- off, smoke, flames or bolts -- reaching about three and a half cells back and fading the whole way out",
+      "RUN FX: a trail off your heels while you run -- off, smoke, flames or bolts -- reaching about three and a half cells back and fading the whole way out. Each particle is drawn as rows off a shape table: the puff is a disc, the flame a teardrop pinched at the tip and rounded at the base, the bolt thick at the ground and a hair at its tip",
+      "RUN FX is shed a cell and a quarter BEHIND the heels and never draws inside the player's own 16x16 sprite box: it composites over the finished frame, so a mark in that box is a mark on the character rather than behind him",
       "BURN GRASS (off): tall grass you RUN across is really CUT, one clod at a time, following every cell of your path -- the tile stops being grass, so the engine stops rolling encounters on it by itself",
       "SAFE GRASS (off): running through tall grass never starts a wild battle",
     },

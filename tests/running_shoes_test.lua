@@ -530,19 +530,44 @@ local VIEWPORT = { width = 640, height = 576, gameX = 0, gameY = 0,
                    dpiX = 1, dpiY = 1 }
 
 local drawn, minX, maxX = 0, nil, nil
-local headW, tailW = nil, nil       -- rect width at each end of the trail
+local marks = {}                    -- every rect this frame, as { x, w }
+local headW, tailW = nil, nil       -- how WIDE the trail is at each end
 local realRect = love.graphics.rectangle
-love.graphics.rectangle = function(_, x, _y, w)
+love.graphics.rectangle = function(_, x, y, w, h)
   drawn = drawn + 1
   if type(x) == "number" then
-    if not minX or x < minX then minX, tailW = x, w end
-    if not maxX or x > maxX then maxX, headW = x, w end
+    if not minX or x < minX then minX = x end
+    if not maxX or x > maxX then maxX = x end
+    marks[#marks + 1] = { x = x, y = y, w = w, h = h }
   end
+end
+
+-- The width of the trail at each end, and why it is a MAX over a window
+-- rather than the width of the single extreme rectangle it used to be.
+--
+-- A particle is drawn as rows now (see the shape tables in main.lua), and a
+-- row is placed at `centre - width/2` -- so within one particle the
+-- NARROWEST row has the largest x and the widest has the smallest. Reading
+-- the rectangle at max x therefore reads the tip of the head particle
+-- against the waist of the tail one, which says nothing about the taper.
+-- Half a cell of screen pixels is comfortably one particle wide, so the
+-- widest row inside that window at each end is the honest answer.
+local function ends()
+  if #marks == 0 then return nil, nil end
+  local window = 16 * VIEWPORT.scale / 2
+  local head, tail = 0, 0
+  for _, m in ipairs(marks) do
+    if m.x >= maxX - window and m.w > head then head = m.w end
+    if m.x <= minX + window and m.w > tail then tail = m.w end
+  end
+  return head, tail
 end
 
 local function hud()
   drawn, minX, maxX, headW, tailW = 0, nil, nil, nil, nil
+  for i = #marks, 1, -1 do marks[i] = nil end
   Runtime.call("render.hud", function() end, STUB, VIEWPORT)
+  headW, tailW = ends()
   return drawn
 end
 
@@ -558,8 +583,21 @@ end
 -- Player carries
 local runner = { px = 48, py = 64, facing = "down", moving = true,
                  stepFramesCur = nil }
+-- A running player MOVES, and the fixture has to as well. The trail is shed
+-- BEHIND him and anything that lands inside his own 16x16 sprite box is
+-- suppressed rather than drawn over his face (see BEHIND and onSprite in
+-- main.lua), so a runner pinned to one pixel would shed every mark into that
+-- box and the overlay would correctly draw nothing at all. One world pixel a
+-- tick along the facing is what Player:update does.
+local STEP1 = { up = { 0, -1 }, down = { 0, 1 }, left = { -1, 0 }, right = { 1, 0 } }
 local function runTicks(n)
-  for _ = 1, n do Runtime.call("input.step", function() end, STUB, 1 / 60) end
+  for _ = 1, n do
+    Runtime.call("input.step", function() end, STUB, 1 / 60)
+    if runner.moving then
+      local d = STEP1[runner.facing] or STEP1.down
+      runner.px, runner.py = runner.px + d[1], runner.py + d[2]
+    end
+  end
 end
 
 setOpt("fx", "off")
@@ -596,6 +634,56 @@ for _, kind in ipairs({ "dust", "fire", "bolt" }) do
   runTicks(12)
   T.check(hud() > 0, "RUN FX " .. kind .. " draws")
 end
+
+-- ------- 1.7.1: behind the player, never over him
+--
+-- `render.hud` composites over the FINISHED frame, so anything this mod
+-- draws inside the player's own 16x16 sprite box is drawn ON the character
+-- rather than behind him -- reported as the effect covering the sprite when
+-- running rightwards. The trail used to be shed at the player's own
+-- centre and drift out from there, which put its freshest and brightest
+-- marks squarely on him.
+--
+-- The projection is fixed and known, which is what makes this measurable
+-- rather than a matter of taste. At scale 4 with dpi 1 one world pixel is
+-- four screen pixels, the player's cell origin lands at `width/2 - 16*4` =
+-- 256 across and `height/2 - 8*4` = 256 down, and `SpriteRenderer:draw` puts
+-- his 16x16 frame at (px, py - 4) -- so the character occupies 256..320
+-- across and 240..304 down, and no mark of ours may be CENTRED anywhere in
+-- that rectangle. A row is drawn from its left edge, so its centre is
+-- x + w/2, which is exactly what the recorder above keeps.
+local SPRITE_L, SPRITE_R = 256, 320
+local SPRITE_T, SPRITE_B = 240, 304
+
+local function marksOnSprite()
+  local n = 0
+  for _, m in ipairs(marks) do
+    local cx, cy = m.x + (m.w or 0) / 2, m.y + (m.h or 0) / 2
+    if cx >= SPRITE_L and cx <= SPRITE_R and cy >= SPRITE_T and cy <= SPRITE_B then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+-- All four directions and all three kinds. The bolt earns its place here:
+-- it is a jagged line drawn UPWARD from its spawn point, so it reaches
+-- eleven pixels above its own centre where a puff reaches four, and a guard
+-- written around the centre alone lets exactly that case through.
+for _, kind in ipairs({ "dust", "fire", "bolt" }) do
+  for _, dir in ipairs({ "right", "left", "down", "up" }) do
+    setOpt("fx", kind)
+    Runtime.emit("map.exited", {})
+    runner.facing, runner.moving = dir, true
+    runner.px, runner.py = 0, 0
+    speed(WALK, ctx{ b = true, player = runner })
+    runTicks(10)
+    T.check(hud() > 0, ("RUN FX %s running %s puts a trail on screen"):format(kind, dir))
+    T.eq(marksOnSprite(), 0,
+      ("RUN FX %s running %s draws nothing on top of the player"):format(kind, dir))
+  end
+end
+runner.facing = "down"
 
 -- ------- how far back the trail actually reaches
 --
@@ -1152,9 +1240,16 @@ do
   love.graphics.rectangle = function() drawn2 = drawn2 + 1 end
   local VIEWPORT2 = { width = 640, height = 576, gameX = 0, gameY = 0,
                       gameWidth = 640, gameHeight = 576, scale = 4, dpiX = 1, dpiY = 1 }
-  local runner3 = { px = 48, py = 64, facing = "down", moving = true }
+  -- moved a pixel a tick, like the Gen 1 fixture above and for the same
+  -- reason: marks shed inside the player's own sprite box are suppressed
+  -- rather than drawn over him, so a runner pinned to one pixel draws
+  -- nothing and this would assert the wrong thing about frameWorldActive
+  local runner3 = { px = 48, py = 64, facing = "right", moving = true }
   speed2(16, ctx2{ b = true, player = runner3 })
-  for _ = 1, 8 do Runtime.call("input.step", function() end, STUB2, 1 / 60) end
+  for _ = 1, 8 do
+    Runtime.call("input.step", function() end, STUB2, 1 / 60)
+    runner3.px = runner3.px + 1
+  end
 
   STUB2.frameWorldActive = false
   drawn2 = 0
