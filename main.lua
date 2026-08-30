@@ -264,13 +264,28 @@ local PER_TICK = 2
 -- reach the trailing edge, which is why running rightwards was reported as
 -- broken and running leftwards was not.
 --
--- A cell and a quarter back along the direction of travel. Eight world
--- pixels reaches the sprite's trailing edge from the spawn point at its
--- centre, and the particle's own half width plus the jitter eats most of
--- what is left -- so sixteen only just cleared the box, and on a play test
--- the trail still read as crowding the character on the way right. Twenty
--- puts daylight between the two, which is what it wanted.
-local BEHIND = 20
+-- At the heels, not a cell and a quarter behind them.
+--
+-- This was 20 -- more than a whole cell back along the way you came --
+-- because the trail kept reading as drawn ON the character and each
+-- attempt to clear him pushed the number up. Twenty does clear him. It
+-- also detaches the effect from the runner: at four frames a tile the
+-- freshest mark is already a cell away by the time you see it, so the
+-- trail does not follow the player, it trails a player-shaped gap. That is
+-- what "the FX does not follow the character properly" is.
+--
+-- Fourteen is the closest it can honestly get, and the suite is what said
+-- so: at ten the spawn lands INSIDE the grown sprite box, `onSprite` drops
+-- every particle, and the trail does not merely sit wrong -- it vanishes.
+-- ("RUN FX dust puts a trail on screen while running" is the check that
+-- caught it.)
+--
+-- Eight world pixels from the centre reaches the sprite's trailing edge and
+-- the particle's own reach is four more, so twelve is the floor and
+-- fourteen clears it with the jitter. Six pixels closer than twenty is
+-- most of the gap the player was looking at, and `onSprite` still culls
+-- anything that drifts back onto him, every frame, in every direction.
+local BEHIND = 14
 
 -- The sprite's own box, relative to the cell origin the camera is anchored
 -- on: `SpriteRenderer:draw` puts a 16x16 frame at (px, py - 4)
@@ -502,26 +517,30 @@ return function(mod)
   -- table when a slot is loaded, and a cached reference would go on
   -- writing into the save the player just left.
 
-  local function burntCells(mapId, create)
-    if type(mapId) ~= "string" then return nil end
-    local all = mod.save:get("burnt")
-    if type(all) ~= "table" then
-      if not create then return nil end
-      all = {}
-      mod.save:set("burnt", all)
+  -- ------- IT GROWS BACK, BECAUSE CUT'S GRASS GROWS BACK
+  --
+  -- This used to be kept in `mod.save`, keyed by map, and re-applied every
+  -- time you walked back in. That made a run through a field permanent:
+  -- one lap of Route 1 and the grass was gone from that save for good.
+  --
+  -- The engine's own CUT does not work that way, and it is the thing this
+  -- is imitating. Cutting swaps a block in the RUNNING map
+  -- (OverworldState:tryCut); nothing writes it down. Leave the map and it
+  -- is rebuilt from its record, grass and all -- which is why you can cut
+  -- the same bush twice in one playthrough.
+  --
+  -- So the cut lives exactly as long as the map is loaded, and there is
+  -- nothing left here to remember it with. A run leaves a path behind you
+  -- while you are in the field, and the field is whole again next time.
+  local function forgetLegacyBurnt()
+    -- Saves written before this release carry the old table. Clearing it
+    -- is not tidiness: leaving it there would mean an old save still had
+    -- its fields flattened by a version that no longer believes in that,
+    -- and nothing would ever grow back for those players.
+    local ok, all = pcall(function() return mod.save:get("burnt") end)
+    if ok and type(all) == "table" then
+      pcall(function() mod.save:set("burnt", nil) end)
     end
-    local cells = all[mapId]
-    if type(cells) ~= "table" then
-      if not create then return nil end
-      cells = {}
-      all[mapId] = cells
-    end
-    return cells
-  end
-
-  local function remember(mapId, x, y)
-    local cells = burntCells(mapId, true)
-    if cells then cells[x .. "," .. y] = true end
   end
 
   -- ------- cutting the grass for real
@@ -653,7 +672,6 @@ return function(mod)
 
     local ok = mod.world and mod.world:replaceBlock(bx, by, id)
     if not ok then return false end
-    remember(map.id, cx, cy)
     -- AnimCut .grass: tall grass gets the leaf-swirl / dust puff rather
     -- than the tree-split slide. Same call the engine's own Cut makes, and
     -- never over one already in flight -- that animation owns a callback
@@ -819,7 +837,6 @@ return function(mod)
 
     local ok = mod.world and mod.world:replaceBlock(bx, by, id)
     if not ok then return false end
-    remember(map.id, cx, cy)
     -- No dust puff here: `World:runCut` plays one through its own script
     -- callback, not through anything a live map edit can reach mid-step, and
     -- there is no Gen 2 `startDustAnim` to borrow the way Gen 1's arm does.
@@ -1402,22 +1419,12 @@ return function(mod)
     end
   end)
 
-  -- A cut is a change to the running map, and the running map is rebuilt
-  -- from its record every time the game is loaded afresh. What was cut
-  -- lives in mod.save, so entering a map re-applies it -- quietly, with no
-  -- puff, because this is restoring a state rather than cutting anything.
-  mod.events:on("map.entered", function(ev)
-    local game, mapId = live, type(ev) == "table" and ev.mapId or nil
-    if not (game and mapId and cutOn()) then return end
-    local cells = burntCells(mapId, false)
-    if not cells then return end
-    for key in pairs(cells) do
-      if type(key) == "string" then
-        local cx, cy = key:match("^(-?%d+),(-?%d+)$")
-        cx, cy = tonumber(cx), tonumber(cy)
-        if cx and cy then cutGrassAt(game, cx, cy, true) end
-      end
-    end
+  -- Entering a map used to re-cut everything this mod had ever run
+  -- through. It does not any more -- the map comes back whole, the way it
+  -- does after CUT -- so all that is left here is throwing away what older
+  -- versions wrote down.
+  mod.events:on("map.entered", function()
+    forgetLegacyBurnt()
   end)
 
   -- Every logic tick: the moment the player is not moving, the fast value

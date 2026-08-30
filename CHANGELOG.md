@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.8.0 -- the grass grows back
+
+**What you run through comes back, the way CUT's grass comes back.** The
+burnt cells used to be written into `mod.save`, keyed by map, and re-applied
+every time you walked back in -- so one lap of a route stripped it for the
+life of that save.
+
+That is not what this was imitating. The engine's own CUT swaps a block in
+the RUNNING map (`OverworldState:tryCut`) and writes nothing down; leave the
+map and it is rebuilt from its record, grass and all, which is why the same
+bush can be cut twice in one playthrough. Now so does this: a run leaves a
+path behind you while you are in the field, and the field is whole again
+next time you walk in.
+
+A save carrying the old table has it thrown away on the next map entry --
+leaving it there would mean an old save stayed flattened by a version that
+no longer believes in that.
+
+**The trail runs closer to the heels.** `BEHIND` was 20 -- more than a whole
+cell back along the way you came -- because each attempt to stop the effect
+drawing ON the character pushed the number up. It did clear him, and it also
+detached the effect from the runner: at four frames a tile the freshest mark
+is already a cell away by the time you see it, so the trail did not follow
+the player, it trailed a player-shaped gap.
+
+Fourteen is as close as it can honestly get, and the suite is what said so:
+at ten the spawn lands inside the grown sprite box, `onSprite` drops every
+particle, and the trail does not sit wrong -- it disappears. Eight pixels
+reaches the sprite's trailing edge and the particle's own reach is four
+more, so twelve is the floor and fourteen clears it with the jitter.
+
 ## 1.7.1 — the trail goes behind you, and looks like something
 
 Reported from play: running rightwards drew the trail on top of the

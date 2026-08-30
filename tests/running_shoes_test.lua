@@ -439,22 +439,34 @@ T.check(MAP:isGrassCell(2, 2), "while the two cells nobody ran over stay grass")
 T.check(not MAP:isGrassCell(2, 3),
   "a cut cell answers no to the predicate the encounter check gates on")
 
--- what was cut is recorded, and entering the map again re-applies it: a
--- fresh boot rebuilds the map from its record, with every block uncut
-local saved = loader.modSave.running_shoes and loader.modSave.running_shoes.burnt
-T.check(saved and saved.ROUTE_1 and saved.ROUTE_1["2,3"] == true,
-  "the cut cell is recorded in mod.save so it survives a reload")
+-- ------- IT GROWS BACK, BECAUSE CUT'S GRASS GROWS BACK
+--
+-- This used to be written into mod.save and re-applied on every entry, so
+-- one lap of a route stripped it for the life of that save. The engine's
+-- own CUT does not work that way -- it swaps a block in the RUNNING map and
+-- writes nothing down, which is why the same bush can be cut twice in one
+-- playthrough -- and this is imitating CUT.
+T.check(loader.modSave.running_shoes == nil
+        or loader.modSave.running_shoes.burnt == nil,
+  "nothing about the cut is written into the save")
 
 MAP = freshMap()
 OW = overworldOn(MAP)
 STUB.stack.states = { OW }
 STUB.overworld = OW
-T.check(MAP:isGrassCell(2, 3), "a freshly loaded map starts uncut again")
 tick()
 Runtime.emit("map.entered", { mapId = "ROUTE_1" })
-T.check(not MAP:isGrassCell(2, 3), "entering the map re-applies the cut")
-T.check(not MAP:isGrassCell(3, 3), "both cut cells come back")
-T.check(MAP:isGrassCell(2, 2), "and the cells that were never cut are still grass")
+T.check(MAP:isGrassCell(2, 3), "walking back in, the grass has grown back")
+T.check(MAP:isGrassCell(3, 3), "all of it, not just the first cell")
+T.check(MAP:isGrassCell(2, 2), "and what was never cut is grass as it always was")
+
+-- and a save carrying the old table has it thrown away, or an old save
+-- would still be flattened by a version that no longer believes in that
+loader.modSave.running_shoes = loader.modSave.running_shoes or {}
+loader.modSave.running_shoes.burnt = { ROUTE_1 = { ["2,3"] = true } }
+Runtime.emit("map.entered", { mapId = "ROUTE_1" })
+T.check(loader.modSave.running_shoes.burnt == nil,
+  "and what an older version wrote down is cleared out")
 
 -- ------- the cut has to FOLLOW the player, with no holes in it
 --
@@ -1203,9 +1215,9 @@ do
   T.check(MAP2:blockAt(1, 1) ~= 1,
     "the Gen 2 block under the cut cell is a new, synthesized id")
 
-  local saved2 = loader2.modSave.running_shoes and loader2.modSave.running_shoes.burnt
-  T.check(saved2 and saved2.TEST_ROUTE and saved2.TEST_ROUTE["2,3"] == true,
-    "the Gen 2 cut is recorded in mod.save too")
+  T.check(loader2.modSave.running_shoes == nil
+          or loader2.modSave.running_shoes.burnt == nil,
+    "the Gen 2 cut is not written into the save either")
 
   -- an unlisted grass block (block 3, absent from CUT_BLOCKS) still cuts,
   -- the same "no holes down the path" guarantee the Gen 1 suite pins above
@@ -1217,14 +1229,14 @@ do
   T.check(not MAP2:isGrassCell(1, 1),
     "a Gen 2 grass block absent from CUT_BLOCKS is cut all the same")
 
-  -- re-entering the map re-applies what was cut, the same as the Gen 1 arm
+  -- and it grows back here too, the same as the Gen 1 arm
   MAP2 = freshMap2()
   WORLD2 = worldOn(MAP2)
   STUB2.world = WORLD2
-  T.check(MAP2:isGrassCell(2, 3), "a freshly loaded Gen 2 map starts uncut again")
   tick2()
   Runtime.emit("map.entered", { mapId = "TEST_ROUTE" })
-  T.check(not MAP2:isGrassCell(2, 3), "entering the Gen 2 map re-applies the cut")
+  T.check(MAP2:isGrassCell(2, 3),
+    "walking back into the Gen 2 map, the grass has grown back")
 
   setOpt2("burn", false)
 
