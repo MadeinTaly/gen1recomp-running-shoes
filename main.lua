@@ -1223,6 +1223,24 @@ return function(mod)
     end
 
     love.graphics.push("all")
+    -- The engine leaves this surface clean, but "leaves it clean" is a
+    -- promise about today's compositor and this is somebody else's frame.
+    -- A palette shader still bound would remap these colours to whatever it
+    -- pleased, which is one of the ways an effect ends up invisible rather
+    -- than wrong. Say what we need.
+    love.graphics.setShader()
+    love.graphics.setScissor()
+    if love.graphics.setBlendMode then love.graphics.setBlendMode("alpha") end
+
+    -- ------- AFTER the state is made safe, not before
+    --
+    -- This block used to sit directly under the push, which is BEFORE the
+    -- three lines above -- and on Gen 1 that meant drawing while the
+    -- engine's palette shader was still bound, so every stripe was remapped
+    -- to whatever four shades it pleased and the ribbon was simply not
+    -- there. Gold binds no such shader, which is why it worked there and
+    -- only there. An effect that is invisible on one generation and fine on
+    -- the other is almost always this.
     -- ------- the ribbon, drawn under everything else
     --
     -- Six flat stripes across the direction of travel, one rectangle each,
@@ -1245,11 +1263,11 @@ return function(mod)
           local c = RAINBOW_BAND[k]
           love.graphics.setColor(c[1], c[2], c[3], alpha)
           local off = -band / 2 + (k - 1) * RIBBON_STRIPE
-          local sx, sy, sw, sh
+          local rx, ry, rw, rh
           if r.dx ~= 0 then
-            sx, sy, sw, sh = r.x - seg / 2, r.y + off, seg, RIBBON_STRIPE
+            rx, ry, rw, rh = r.x - seg / 2, r.y + off, seg, RIBBON_STRIPE
           else
-            sx, sy, sw, sh = r.x + off, r.y - seg / 2, RIBBON_STRIPE, seg
+            rx, ry, rw, rh = r.x + off, r.y - seg / 2, RIBBON_STRIPE, seg
           end
           -- UNDER the character, as far as a hud overlay can be. This
           -- composites over the finished frame, so anything drawn where
@@ -1259,21 +1277,13 @@ return function(mod)
           -- behind, which is what being underneath looks like.
           local bx1, by1 = player.px, player.py + SPRITE_TOP
           local bx2, by2 = player.px + SPRITE_W, player.py + SPRITE_BOT
-          if not (sx < bx2 and sx + sw > bx1
-                  and sy < by2 and sy + sh > by1) then
-            put(sx, sy, sw, sh)
+          if not (rx < bx2 and rx + rw > bx1
+                  and ry < by2 and ry + rh > by1) then
+            put(rx, ry, rw, rh)
           end
         end
       end
     end
-    -- The engine leaves this surface clean, but "leaves it clean" is a
-    -- promise about today's compositor and this is somebody else's frame.
-    -- A palette shader still bound would remap these colours to whatever it
-    -- pleased, which is one of the ways an effect ends up invisible rather
-    -- than wrong. Say what we need.
-    love.graphics.setShader()
-    love.graphics.setScissor()
-    if love.graphics.setBlendMode then love.graphics.setBlendMode("alpha") end
 
     local drew = 0
 

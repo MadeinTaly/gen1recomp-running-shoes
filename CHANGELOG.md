@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.9.2 -- the rainbow was invisible on Gen 1
+
+It drew before the surface was made safe. The overlay pushes the graphics
+state, then clears the shader, the scissor and the blend mode -- because
+this is somebody else's frame and a palette shader still bound would remap
+these colours to whatever it pleased. The ribbon block sat directly under
+the push, which is BEFORE those three lines, so on Gen 1 every stripe went
+through the engine's shade remap and the band was simply not there.
+
+Gold binds no such shader, which is why it worked there and only there. An
+effect that is invisible on one generation and fine on the other is almost
+always this.
+
+Also, the skip test named its rectangle `sx, sy, sw, sh`, and `sx`/`sy` are
+already the draw scales in that scope. `put` captured the real ones and kept
+working, so nothing was wrong on screen -- but a shadow that harmless is
+only harmless until somebody edits near it.
+
 ## 1.9.1 -- the rainbow is a ribbon, not a cloud
 
 **A flag, and it runs the whole route.** Four pixels a stripe puts the band
