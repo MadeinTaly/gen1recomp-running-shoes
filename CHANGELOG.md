@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.9.0 -- RAINBOW
+
+A fourth RUN FX. The other three are a fixed five-colour ramp read by AGE,
+so every mark is the same colour at the same point in its life. This one is
+the opposite: the colour belongs to the MARK rather than to its age, so
+consecutive marks step through the spectrum and what comes out is a rainbow
+lying along the path you ran.
+
+The part that makes it read right needed no new code. The trail already
+lives in world space and each mark already dies `lifeSpan()` ticks after it
+was shed -- a span computed from the run's own frames-per-cell -- so when
+you stop, the far end goes out first and the colour retreats up the path at
+exactly the speed you were running. That was in the machinery before this
+had a colour.
+
+Six hues rather than a continuous sweep, three flat shades each: a smooth
+gradient reads as somebody else's engine, and this has to sit next to a Game
+Boy.
+
 ## 1.8.0 -- the grass grows back
 
 **What you run through comes back, the way CUT's grass comes back.** The

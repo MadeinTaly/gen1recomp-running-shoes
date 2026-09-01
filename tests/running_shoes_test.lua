@@ -1281,4 +1281,46 @@ do
   run2.release()
 end
 
+-- ------- IL RAINBOW
+--
+-- Gli altri tre effetti sono una rampa fissa letta per ETA': ogni segno ha
+-- lo stesso colore allo stesso punto della sua vita. Il rainbow e' il
+-- contrario -- il colore appartiene al SEGNO, non alla sua eta' -- quindi
+-- segni consecutivi percorrono lo spettro e la banda che ne esce e' un
+-- arcobaleno steso lungo la strada percorsa.
+--
+-- Il ritiro progressivo non e' codice nuovo: la scia vive nel mondo e ogni
+-- segno muore `lifeSpan()` tick dopo essere stato lasciato, e quello span
+-- si calcola dai fotogrammi-per-cella della corsa. Quindi smettendo di
+-- correre la coda si spegne per prima e il colore si ritira lungo il
+-- percorso alla velocita' a cui stavi correndo.
+do
+  setOpt("fx", "rainbow")
+  local seen = {}
+  MAP = freshMap()
+  OW = overworldOn(MAP)
+  STUB.stack.states = { OW }
+  STUB.overworld = OW
+  for _ = 1, 12 do
+    stepOnto(2, 3, true)
+    tick()
+  end
+  setOpt("fx", "dust")
+
+  -- e RAINBOW deve esserci davvero fra le scelte, o l'opzione non e'
+  -- raggiungibile da chi gioca
+  local schema = loader.optionSchemas and loader.optionSchemas.running_shoes
+  T.check(schema ~= nil, "lo schema delle opzioni c'e'")
+  if schema then
+    local fx
+    for _, row in ipairs(schema) do if row.key == "fx" then fx = row end end
+    T.check(fx ~= nil, "e ha la riga RUN FX")
+    local has = false
+    for _, c in ipairs((fx and fx.choices) or {}) do
+      if c[2] == "rainbow" then has = true end
+    end
+    T.check(has, "con RAINBOW fra le scelte")
+  end
+end
+
 T.finish("running_shoes")

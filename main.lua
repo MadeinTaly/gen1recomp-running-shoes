@@ -303,6 +303,7 @@ local REACH = {
   dust = { x = 4, up = 4, down = 4 },
   fire = { x = 4, up = 5, down = 5 },
   bolt = { x = 5, up = 11, down = 1 },
+  rainbow = { x = 4, up = 4, down = 4 },
 }
 
 -- How long the engine's own dust puff is held behind a running player.
@@ -353,6 +354,7 @@ return function(mod)
         { "DUST", "dust" },
         { "FLAMES", "fire" },
         { "BOLTS", "bolt" },
+        { "RAINBOW", "rainbow" },
       } },
     -- These two change the game rather than the picture, so they are off.
     { key = "burn", label = "BURN GRASS", type = "toggle", default = false },
@@ -916,6 +918,9 @@ return function(mod)
       vx = (rnd() * 0.16 - 0.08),
       vy = -(kind == "fire" and 0.22 or 0.10) + (rnd() * 0.10 - 0.05),
       life = life, max = life,
+      -- the hue belongs to the MARK: one step per pair of feet, so the
+      -- band walks the spectrum along the path rather than flickering
+      hue = math.floor(spawnClock / 2),
       -- one number per particle, standing in for every per-particle random
       -- the draw wants: which way its smoke leans, which way its bolt jags
       seed = math.floor(rnd() * 64),
@@ -945,7 +950,38 @@ return function(mod)
   -- (core white-hot, rim mid), old sits at the bottom (core mid, rim
   -- nearly gone) -- so age is a slide down one table rather than a second
   -- set of colours.
+  -- ------- THE RAINBOW
+  --
+  -- The other three effects are a fixed five-colour ramp read by AGE, so
+  -- every mark is the same colour at the same point in its life. A rainbow
+  -- is the opposite: the colour belongs to the MARK, not to its age, so
+  -- consecutive marks step through the spectrum and the band that comes
+  -- out is a rainbow lying along the path you ran.
+  --
+  -- Nothing else has to change for it to behave. The trail already lives
+  -- in world space and each mark already dies `lifeSpan()` ticks after it
+  -- was shed -- a span computed from the run's own frames-per-cell -- so
+  -- when you stop, the far end goes out first and the colour retreats up
+  -- the path at exactly the speed you were running. That was in the
+  -- machinery before this had a colour.
+  --
+  -- Six hues rather than a continuous sweep, and three flat shades each:
+  -- a smooth gradient reads as somebody else's engine, and this has to sit
+  -- next to a Game Boy.
+  local RAINBOW = {
+    { { 1.00, 0.42, 0.42 }, { 0.88, 0.20, 0.20 }, { 0.55, 0.08, 0.08 } },
+    { { 1.00, 0.72, 0.36 }, { 0.94, 0.54, 0.12 }, { 0.60, 0.30, 0.04 } },
+    { { 1.00, 0.96, 0.50 }, { 0.94, 0.86, 0.20 }, { 0.58, 0.50, 0.06 } },
+    { { 0.56, 0.92, 0.52 }, { 0.28, 0.74, 0.30 }, { 0.10, 0.44, 0.14 } },
+    { { 0.52, 0.76, 1.00 }, { 0.22, 0.50, 0.92 }, { 0.06, 0.26, 0.58 } },
+    { { 0.80, 0.60, 1.00 }, { 0.60, 0.34, 0.90 }, { 0.32, 0.14, 0.56 } },
+  }
+
   local function window(kind, p)
+    if kind == "rainbow" then
+      local band = RAINBOW[((p.hue or 0) % #RAINBOW) + 1]
+      return band[1], band[2], band[3]
+    end
     local ramp = RAMP[kind] or RAMP.dust
     local i = math.floor((1 - p.life / p.max) * 2.999)   -- 0, 1 or 2
     return ramp[i + 1], ramp[i + 2], ramp[i + 3]
@@ -956,7 +992,7 @@ return function(mod)
   -- which end the player is at from the shape alone, without watching it
   -- move. An earlier pass had smoke EXPAND as it thinned, which is what
   -- real smoke does and which read as a smear rather than as a trail.
-  local BIG = { dust = 6, fire = 7, bolt = 3 }
+  local BIG = { dust = 6, fire = 7, bolt = 3, rainbow = 6 }
 
   local function sizeOf(kind, p)
     local big = BIG[kind] or 5
