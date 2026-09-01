@@ -18,6 +18,17 @@ A save carrying the old table has it thrown away on the next map entry --
 leaving it there would mean an old save stayed flattened by a version that
 no longer believes in that.
 
+**And the sideways scatter is halved when you run left or right.** "Across
+the direction of travel" is up and down when you are running sideways, and
+the two axes are not interchangeable: six pixels of scatter is a band the
+width of a cell going one way, and most of the character's height going the
+other. It put marks at his knees and a hand's width below his shoes, so the
+trail stopped reading as coming off the heels and started reading as
+floating beside him -- which is why running rightwards was the direction
+reported and running up and down was not. The spawn itself is symmetric to
+the pixel either way, six clear of the sprite box on whichever side the
+trail is shed, so this was the part that was actually uneven.
+
 **The trail runs closer to the heels.** `BEHIND` was 20 -- more than a whole
 cell back along the way you came -- because each attempt to stop the effect
 drawing ON the character pushed the number up. It did clear him, and it also

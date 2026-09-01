@@ -886,6 +886,21 @@ return function(mod)
     local ax, ay = -d[2], d[1]
     local foot = (spawnClock % 2 == 0) and 1 or -1
     local spread = foot * (2 + rnd() * 3.5) + (rnd() * 2 - 1)
+    -- ...but half of it when the spread lands on the VERTICAL axis.
+    --
+    -- Running left or right, "across the direction of travel" is up and
+    -- down, and the two are not interchangeable. Sideways, six pixels of
+    -- scatter is a band the width of the cell and reads as a pair of feet.
+    -- Vertically it is most of the character's height: the same six pixels
+    -- put marks at his knees and a hand's width below his shoes, so the
+    -- trail stopped reading as coming off the heels and started reading as
+    -- floating beside him -- which is why running rightwards was the one
+    -- reported and running up and down was not.
+    --
+    -- The spawn itself is symmetric to the pixel either way (six clear of
+    -- the sprite box on whichever side the trail is shed), so this is the
+    -- part that was actually uneven.
+    if d[1] ~= 0 then spread = spread * 0.5 end
     local life = lifeSpan()
     particles[#particles + 1] = {
       kind = kind,
