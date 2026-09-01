@@ -13,6 +13,15 @@ running stops the band RETRACTS from its far end, oldest first, so it rolls
 back up the path you drew instead of thinning all over. "Follows you the
 whole way, then disappears along the trail" as a rule rather than a number.
 
+**Centred on him, not near him.** Two things were pulling it off. It was
+laid a few pixels BEHIND along the way he was going, which on a band this
+wide is a visible step where the ribbon meets him rather than a clean exit.
+And the vertical was simply wrong: `py` is the top of the CELL, but the
+16x16 frame is drawn at `(px, py - 4)`, so the character occupies
+`py-4 .. py+12` and his middle is `py + 4`. Using the cell's centre put the
+band four pixels low, which at 24 wide reads as the rainbow sagging past
+his feet.
+
 **Under the character, as far as a hud overlay can be.** `render.hud`
 composites over the finished frame, so anything drawn where the player is
 would be drawn ON him -- and a band this wide would bury him. The stripes

@@ -897,7 +897,6 @@ return function(mod)
   -- half again as wide as a cell -- which is what "enorme" asks for and
   -- what makes six colours legible at Game Boy scale in the first place.
   local RIBBON_STRIPE = 4                    -- pixels per colour band
-  local RIBBON_BEHIND = 4                    -- clear of the sprite's edge
 
   -- And it runs the whole route rather than three cells of it. The
   -- particle trail is short on purpose -- a puff of dust that outlived the
@@ -925,9 +924,21 @@ return function(mod)
   local function layRibbon(player)
     if not (player and player.px and player.py) then return end
     local d = DIRV[player.facing] or DIRV.down
+    -- ------- CENTRED ON THE CHARACTER, NOT NEAR HIM
+    --
+    -- Two things were pulling it off him. It was laid a few pixels BEHIND
+    -- along the way he was going, which on a band this wide is a visible
+    -- step where the ribbon meets him rather than a clean exit -- and a
+    -- Nyan trail comes out of the middle, not off the back edge.
+    --
+    -- And the vertical was simply wrong. `py` is the top of the CELL, but
+    -- SpriteRenderer draws the 16x16 frame at (px, py - 4), so the
+    -- character occupies py-4 .. py+12 and his middle is py + 4. Using
+    -- py + 8 -- the cell's own centre -- put the band four pixels low,
+    -- which at 24 wide reads as the rainbow sagging past his feet.
     ribbon[#ribbon + 1] = {
-      x = player.px + 8 - d[1] * RIBBON_BEHIND,
-      y = player.py + 8 - d[2] * RIBBON_BEHIND,
+      x = player.px + SPRITE_W / 2,
+      y = player.py + (SPRITE_TOP + SPRITE_BOT) / 2,
       dx = d[1], dy = d[2],
     }
     -- the same ceiling the particles keep: a decoration may not run the
