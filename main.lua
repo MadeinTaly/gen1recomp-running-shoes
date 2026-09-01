@@ -459,10 +459,18 @@ return function(mod)
     return enabled("burn")
   end
 
+  -- The kinds this knows how to draw. It used to ask RAMP, which was the
+  -- same question for as long as every effect was a five-colour ramp read
+  -- by age -- and then RAINBOW arrived, whose colour comes from the MARK
+  -- and lives in a table of its own. RAMP had no row for it, so `fxKind`
+  -- answered "off", not one particle was ever emitted, and the option sat
+  -- in the menu doing nothing. A list of names says what it means.
+  local KINDS = { dust = true, fire = true, bolt = true, rainbow = true }
+
   local function fxKind()
     local ok, value = pcall(function() return mod.options:get("fx") end)
     if not ok or type(value) ~= "string" then return "off" end
-    return RAMP[value] and value or "off"
+    return KINDS[value] and value or "off"
   end
 
   -- ------- putting the duration back

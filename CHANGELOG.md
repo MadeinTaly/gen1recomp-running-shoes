@@ -2,6 +2,19 @@
 
 ## 1.9.0 -- RAINBOW
 
+**It drew nothing at all in beta.1.** `fxKind` validated the chosen effect
+against the `RAMP` table -- which was the same question for as long as every
+effect was a five-colour ramp read by age. RAINBOW's colour comes from the
+MARK and lives in a table of its own, so `RAMP` had no row for it, `fxKind`
+answered `"off"`, and not one particle was ever emitted. The option sat in
+the menu doing nothing, which is the worst way for a feature to be broken:
+present and silent. The known kinds are a list of names now.
+
+The check that guards it needed care too. Written the obvious way it passed
+against the broken code, because the DUST particles from the block above were
+still alive and still drawing -- so the trail is emptied first, and the
+emptiness asserted, before the rainbow is asked for.
+
 A fourth RUN FX. The other three are a fixed five-colour ramp read by AGE,
 so every mark is the same colour at the same point in its life. This one is
 the opposite: the colour belongs to the MARK rather than to its age, so

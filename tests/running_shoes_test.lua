@@ -622,6 +622,28 @@ speed(WALK, ctx{ b = true, player = runner })
 runTicks(8)
 T.check(hud() > 0, "RUN FX dust puts a trail on screen while running")
 
+-- ------- E IL RAINBOW DISEGNA DAVVERO
+--
+-- Non basta che la scelta esista nel menu. `fxKind` validava l'opzione
+-- contro la tabella RAMP, che per il rainbow non ha una riga -- il suo
+-- colore viene dal SEGNO e sta in una tabella sua -- quindi rispondeva
+-- "off", non veniva emessa una sola particella, e l'opzione stava li' a
+-- non fare niente. Che e' il modo peggiore in cui una feature puo' essere
+-- rotta: presente e muta.
+-- prima si svuota la scia: le particelle del blocco DUST qui sopra sono
+-- ancora vive e disegnerebbero comunque, rendendo la prova vuota (con il
+-- codice vecchio passava lo stesso, che e' come me ne sono accorto)
+setOpt("fx", "off")
+speed(WALK, ctx{ b = true, player = runner })
+runTicks(80)
+T.eq(hud(), 0, "e la scia precedente si e' spenta prima della prova")
+
+setOpt("fx", "rainbow")
+speed(WALK, ctx{ b = true, player = runner })
+runTicks(8)
+T.check(hud() > 0, "RUN FX rainbow mette una scia sullo schermo")
+setOpt("fx", "dust")
+
 -- standing still sheds no dust: the particles already out live their few
 -- frames and the trail empties itself
 runner.moving = false
@@ -1321,6 +1343,8 @@ do
     end
     T.check(has, "con RAINBOW fra le scelte")
   end
+
+
 end
 
 T.finish("running_shoes")
