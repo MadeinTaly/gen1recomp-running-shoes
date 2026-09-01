@@ -2,6 +2,23 @@
 
 ## 1.9.1 -- the rainbow is a ribbon, not a cloud
 
+**A flag, and it runs the whole route.** Four pixels a stripe puts the band
+at 24 -- half again as wide as a cell -- which is what makes six colours
+legible at Game Boy scale at all.
+
+And it does not age while you are running. A fixed lifetime capped the band
+at however many ticks that was, which is the three-cell dust puff again
+wearing colours. A point laid while running simply stays; the moment the
+running stops the band RETRACTS from its far end, oldest first, so it rolls
+back up the path you drew instead of thinning all over. "Follows you the
+whole way, then disappears along the trail" as a rule rather than a number.
+
+**Under the character, as far as a hud overlay can be.** `render.hud`
+composites over the finished frame, so anything drawn where the player is
+would be drawn ON him -- and a band this wide would bury him. The stripes
+his own 16x16 box covers are skipped, which leaves him standing clear with
+the ribbon coming out from behind: what being underneath looks like.
+
 It was built out of the particle system, and particles are the wrong thing
 for this: scattered discs with jitter, spread and drift read as a handful of
 coloured specks trailing off. "Sembrano scorregge" was the report, and it

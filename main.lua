@@ -893,21 +893,46 @@ return function(mod)
   -- point dies `lifeSpan()` ticks after it was laid, and that span comes
   -- from the run's own frames-per-cell. Stop running and the far end goes
   -- out first, up the path, at the speed you were going.
-  local RIBBON_STRIPE = 2                    -- pixels per colour band
-  local RIBBON_BEHIND = 6                    -- clear of the sprite's edge
+  -- A FLAG, not a pinstripe. Four pixels a stripe puts the band at 24 --
+  -- half again as wide as a cell -- which is what "enorme" asks for and
+  -- what makes six colours legible at Game Boy scale in the first place.
+  local RIBBON_STRIPE = 4                    -- pixels per colour band
+  local RIBBON_BEHIND = 4                    -- clear of the sprite's edge
 
-  local function layRibbon(player, life)
+  -- And it runs the whole route rather than three cells of it. The
+  -- particle trail is short on purpose -- a puff of dust that outlived the
+  -- step that made it would read as smoke sitting in a field -- but a
+  -- rainbow is the opposite: the point of it is the LINE you drew, all of
+  -- it, from where you started to where you are.
+  --
+  -- The ceiling is on POINTS rather than on cells, so the band is as long
+  -- as the run and stops growing before it can cost a frame. At one point
+  -- a tick, six hundred is around a hundred and fifty cells of running.
+  --
+  -- And it does not age while you are RUNNING. A fixed lifetime would cap
+  -- the band at however many ticks that was, which is the three-cell puff
+  -- again wearing colours. So a point laid while running simply stays, and
+  -- the moment the running stops the band RETRACTS from its far end -- one
+  -- point a tick, the rate it was laid at, so it rolls back up the path at
+  -- exactly the speed you ran it out. That is "follows you the whole way,
+  -- then disappears along the trail" written as a rule rather than as a
+  -- number.
+  local RIBBON_MAX = 600
+  local RIBBON_RETRACT = 3        -- points dropped per tick once you stop
+
+  local ribbonHot = false
+
+  local function layRibbon(player)
     if not (player and player.px and player.py) then return end
     local d = DIRV[player.facing] or DIRV.down
     ribbon[#ribbon + 1] = {
       x = player.px + 8 - d[1] * RIBBON_BEHIND,
       y = player.py + 8 - d[2] * RIBBON_BEHIND,
       dx = d[1], dy = d[2],
-      life = life, max = life,
     }
     -- the same ceiling the particles keep: a decoration may not run the
     -- frame budget up on a long run
-    while #ribbon > TRAIL_MAX do table.remove(ribbon, 1) end
+    while #ribbon > RIBBON_MAX do table.remove(ribbon, 1) end
   end
 
   -- How long a particle has to live for the trail to reach TRAIL_CELLS
@@ -984,19 +1009,16 @@ return function(mod)
     end
     for i = #particles, kept + 1, -1 do particles[i] = nil end
 
-    -- the ribbon ages the same way, and dies from the TAIL: the oldest
-    -- point is the far end, so the band retracts up the path rather than
-    -- thinning all over
-    local held = 0
-    for i = 1, #ribbon do
-      local r = ribbon[i]
-      r.life = r.life - 1
-      if r.life > 0 then
-        held = held + 1
-        ribbon[held] = r
+    -- The ribbon does not age; it RETRACTS. While a point was laid this
+    -- tick the band is whole, and the moment it was not the far end starts
+    -- rolling back -- oldest first, which is the end furthest from you.
+    if not ribbonHot then
+      for _ = 1, RIBBON_RETRACT do
+        if #ribbon == 0 then break end
+        table.remove(ribbon, 1)
       end
     end
-    for i = #ribbon, held + 1, -1 do ribbon[i] = nil end
+    ribbonHot = false
   end
 
   -- ------- drawing
@@ -1203,19 +1225,32 @@ return function(mod)
       local band = #RAINBOW_BAND * RIBBON_STRIPE
       for i = 1, #ribbon do
         local r = ribbon[i]
-        -- solid where it leaves the runner, fading only at the very tail,
-        -- because a rainbow that is translucent along its whole length
-        -- reads as a smear
-        local t = r.life / r.max
-        local alpha = t > 0.35 and 1 or (t / 0.35)
+        -- Solid, except for a short taper at the far end: a rainbow that
+        -- is translucent along its whole length reads as a smear, and one
+        -- that stops dead reads as a cut ribbon.
+        local fade = math.min(i, 8) / 8
+        local alpha = fade
         for k = 1, #RAINBOW_BAND do
           local c = RAINBOW_BAND[k]
           love.graphics.setColor(c[1], c[2], c[3], alpha)
           local off = -band / 2 + (k - 1) * RIBBON_STRIPE
+          local sx, sy, sw, sh
           if r.dx ~= 0 then
-            put(r.x - seg / 2, r.y + off, seg, RIBBON_STRIPE)
+            sx, sy, sw, sh = r.x - seg / 2, r.y + off, seg, RIBBON_STRIPE
           else
-            put(r.x + off, r.y - seg / 2, RIBBON_STRIPE, seg)
+            sx, sy, sw, sh = r.x + off, r.y - seg / 2, RIBBON_STRIPE, seg
+          end
+          -- UNDER the character, as far as a hud overlay can be. This
+          -- composites over the finished frame, so anything drawn where
+          -- the player is would be drawn ON him -- and a band this wide
+          -- would bury him. Skipping the stripes his 16x16 box covers
+          -- leaves him standing clear with the ribbon coming out from
+          -- behind, which is what being underneath looks like.
+          local bx1, by1 = player.px, player.py + SPRITE_TOP
+          local bx2, by2 = player.px + SPRITE_W, player.py + SPRITE_BOT
+          if not (sx < bx2 and sx + sw > bx1
+                  and sy < by2 and sy + sh > by1) then
+            put(sx, sy, sw, sh)
           end
         end
       end
@@ -1607,7 +1642,8 @@ return function(mod)
       if input and input.isDown and input:isDown("b") then
         spawnClock = spawnClock + 1
         if kind == "rainbow" then
-          layRibbon(anchor, lifeSpan())
+          layRibbon(anchor)
+          ribbonHot = true
         else
           for _ = 1, PER_TICK do emit(kind, anchor) end
         end
