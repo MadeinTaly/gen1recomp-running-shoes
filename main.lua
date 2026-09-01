@@ -868,10 +868,46 @@ return function(mod)
   -- ------- the particles
 
   local particles = {}
+  local ribbon = {}
   local spawnClock = 0
 
   local function clearTrail()
     for i = #particles, 1, -1 do particles[i] = nil end
+    for i = #ribbon, 1, -1 do ribbon[i] = nil end
+  end
+
+  -- ------- THE RAINBOW IS A RIBBON, NOT A CLOUD
+  --
+  -- It was particles at first, and particles are wrong for this: scattered
+  -- discs with jitter and spread read as a handful of coloured specks
+  -- trailing off, not as a rainbow. ("Sembrano scorregge" was the report,
+  -- and it was fair.)
+  --
+  -- A Nyan Cat rainbow is a SOLID BAND: parallel stripes of flat colour
+  -- laid along the path, continuous from the runner back to the tail. So
+  -- this records the PATH -- one point per tick while running, with the
+  -- direction it was travelling -- and paints stripes across it. No
+  -- jitter, no spread, no drift: a ribbon does not billow.
+  --
+  -- It retracts on its own for the same reason the old trail did: every
+  -- point dies `lifeSpan()` ticks after it was laid, and that span comes
+  -- from the run's own frames-per-cell. Stop running and the far end goes
+  -- out first, up the path, at the speed you were going.
+  local RIBBON_STRIPE = 2                    -- pixels per colour band
+  local RIBBON_BEHIND = 6                    -- clear of the sprite's edge
+
+  local function layRibbon(player, life)
+    if not (player and player.px and player.py) then return end
+    local d = DIRV[player.facing] or DIRV.down
+    ribbon[#ribbon + 1] = {
+      x = player.px + 8 - d[1] * RIBBON_BEHIND,
+      y = player.py + 8 - d[2] * RIBBON_BEHIND,
+      dx = d[1], dy = d[2],
+      life = life, max = life,
+    }
+    -- the same ceiling the particles keep: a decoration may not run the
+    -- frame budget up on a long run
+    while #ribbon > TRAIL_MAX do table.remove(ribbon, 1) end
   end
 
   -- How long a particle has to live for the trail to reach TRAIL_CELLS
@@ -947,6 +983,20 @@ return function(mod)
       end
     end
     for i = #particles, kept + 1, -1 do particles[i] = nil end
+
+    -- the ribbon ages the same way, and dies from the TAIL: the oldest
+    -- point is the far end, so the band retracts up the path rather than
+    -- thinning all over
+    local held = 0
+    for i = 1, #ribbon do
+      local r = ribbon[i]
+      r.life = r.life - 1
+      if r.life > 0 then
+        held = held + 1
+        ribbon[held] = r
+      end
+    end
+    for i = #ribbon, held + 1, -1 do ribbon[i] = nil end
   end
 
   -- ------- drawing
@@ -976,6 +1026,14 @@ return function(mod)
   -- Six hues rather than a continuous sweep, and three flat shades each:
   -- a smooth gradient reads as somebody else's engine, and this has to sit
   -- next to a Game Boy.
+  -- The ribbon's six stripes: one flat colour each, no shading. A Nyan
+  -- Cat rainbow is poster paint, and a gradient here would read as a
+  -- smear rather than as a band.
+  local RAINBOW_BAND = {
+    { 1.00, 0.22, 0.22 }, { 1.00, 0.60, 0.12 }, { 1.00, 0.92, 0.16 },
+    { 0.24, 0.78, 0.28 }, { 0.20, 0.50, 0.98 }, { 0.62, 0.30, 0.92 },
+  }
+
   local RAINBOW = {
     { { 1.00, 0.42, 0.42 }, { 0.88, 0.20, 0.20 }, { 0.55, 0.08, 0.08 } },
     { { 1.00, 0.72, 0.36 }, { 0.94, 0.54, 0.12 }, { 0.60, 0.30, 0.04 } },
@@ -1105,7 +1163,9 @@ return function(mod)
       return once("anchor", "RUN FX: waiting for the first step to take an anchor")
     end
 
-    if #particles == 0 then return end
+    -- the ribbon counts too: with RAINBOW there are no particles at all,
+    -- and standing down on an empty particle list drew nothing
+    if #particles == 0 and #ribbon == 0 then return end
     if not topIsOverworld(game) then
       return once("top", "RUN FX: the overworld is not the top state; standing down")
     end
@@ -1130,6 +1190,36 @@ return function(mod)
     end
 
     love.graphics.push("all")
+    -- ------- the ribbon, drawn under everything else
+    --
+    -- Six flat stripes across the direction of travel, one rectangle each,
+    -- laid at every recorded point. The segment is a little longer than
+    -- the distance covered in a tick so consecutive points OVERLAP -- a
+    -- band with gaps in it is a dashed line, not a rainbow.
+    if #ribbon > 0 then
+      local frames = freeFrames or ourFrames or 8
+      local step = 16 / frames
+      local seg = step + 2
+      local band = #RAINBOW_BAND * RIBBON_STRIPE
+      for i = 1, #ribbon do
+        local r = ribbon[i]
+        -- solid where it leaves the runner, fading only at the very tail,
+        -- because a rainbow that is translucent along its whole length
+        -- reads as a smear
+        local t = r.life / r.max
+        local alpha = t > 0.35 and 1 or (t / 0.35)
+        for k = 1, #RAINBOW_BAND do
+          local c = RAINBOW_BAND[k]
+          love.graphics.setColor(c[1], c[2], c[3], alpha)
+          local off = -band / 2 + (k - 1) * RIBBON_STRIPE
+          if r.dx ~= 0 then
+            put(r.x - seg / 2, r.y + off, seg, RIBBON_STRIPE)
+          else
+            put(r.x + off, r.y - seg / 2, RIBBON_STRIPE, seg)
+          end
+        end
+      end
+    end
     -- The engine leaves this surface clean, but "leaves it clean" is a
     -- promise about today's compositor and this is somebody else's frame.
     -- A palette shader still bound would remap these colours to whatever it
@@ -1516,7 +1606,11 @@ return function(mod)
       local input = game and game.input
       if input and input.isDown and input:isDown("b") then
         spawnClock = spawnClock + 1
-        for _ = 1, PER_TICK do emit(kind, anchor) end
+        if kind == "rainbow" then
+          layRibbon(anchor, lifeSpan())
+        else
+          for _ = 1, PER_TICK do emit(kind, anchor) end
+        end
         once("spawn", "RUN FX: %s trail spawning", kind)
       else
         once("nob", "RUN FX: running step, but B is not down at tick time")

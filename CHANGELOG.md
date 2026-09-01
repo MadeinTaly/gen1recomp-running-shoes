@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.9.1 -- the rainbow is a ribbon, not a cloud
+
+It was built out of the particle system, and particles are the wrong thing
+for this: scattered discs with jitter, spread and drift read as a handful of
+coloured specks trailing off. "Sembrano scorregge" was the report, and it
+was fair.
+
+A Nyan Cat rainbow is a SOLID BAND. So this records the PATH instead -- one
+point per tick while running, with the direction it was travelling -- and
+paints six flat stripes across it, one rectangle each. No jitter, no spread,
+no drift: a ribbon does not billow. Consecutive points overlap by design,
+because a band with gaps in it is a dashed line.
+
+It still retracts on its own, and for the same reason as before: every point
+dies `lifeSpan()` ticks after it was laid, and that span comes from the run's
+own frames-per-cell. Stop running and the far end goes out first, up the
+path, at the speed you were going. It is solid for the first two thirds of
+its life and fades only at the very tail, because a rainbow that is
+translucent along its whole length reads as a smear.
+
+Two things had to give way for it. The draw stood down on an empty PARTICLE
+list -- and with RAINBOW there are no particles at all, so it drew nothing;
+the ribbon counts now. And `clearTrail` empties both.
+
 ## 1.9.0 -- RAINBOW
 
 **It drew nothing at all in beta.1.** `fxKind` validated the chosen effect
