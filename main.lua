@@ -144,90 +144,80 @@ local TRAIL_MAX = 128    -- hard ceiling on live particles; a strobe of them
 local DIRV = { up = { 0, -1 }, down = { 0, 1 },
                left = { -1, 0 }, right = { 1, 0 } }
 
--- Three shades each, oldest last, because three shades is what a Game Boy
--- sprite had and a smooth gradient would read as somebody else's engine.
---
--- Smoke greys, fire reds, lightning yellows -- and none of them pale,
--- because a pale anything at half opacity over Route 1's green is a rumour
--- rather than an effect.
--- ------- the ramps
---
--- Five shades each, brightest first, and a particle is drawn from a
--- three-shade WINDOW onto that ramp: core, middle, rim. Two things fall
--- out of one table that way.
---
--- Across the particle, the window gives it a lit core and a dark rim,
--- which is how a Game Boy sprite is shaded and the reason these now read
--- as objects rather than as coloured squares.
---
--- Along its life, the window SLIDES down the ramp: a flame starts with
--- white-yellow at the core and ends as an ember with nothing bright left
--- in it, without the colours ever being interpolated. Same trick, one
--- table, no gradients -- a smooth blend would look like somebody else's
--- engine.
+-- Five discrete shades cool with age; no interpolated gradients.
 local RAMP = {
-  -- smoke: near-white where it leaves the ground, down to a grey that
-  -- still has an edge on a pale tile
   dust = {
-    { 0.95, 0.95, 0.94 }, { 0.80, 0.80, 0.78 }, { 0.60, 0.60, 0.58 },
-    { 0.40, 0.40, 0.39 }, { 0.20, 0.20, 0.20 },
+    { 1.00, 0.96, 0.85 }, { 0.85, 0.83, 0.73 }, { 0.62, 0.65, 0.60 },
+    { 0.39, 0.45, 0.44 }, { 0.22, 0.28, 0.30 },
   },
-  -- fire: white-hot, yellow, orange, red, ember
   fire = {
-    { 1.00, 0.96, 0.72 }, { 1.00, 0.78, 0.16 }, { 0.98, 0.42, 0.06 },
-    { 0.86, 0.12, 0.05 }, { 0.40, 0.04, 0.03 },
+    { 1.00, 0.98, 0.78 }, { 1.00, 0.80, 0.23 }, { 1.00, 0.43, 0.12 },
+    { 0.82, 0.17, 0.14 }, { 0.38, 0.08, 0.16 },
   },
-  -- lightning: a white core cooling through yellow into a dark amber
   bolt = {
-    { 1.00, 1.00, 0.95 }, { 1.00, 0.95, 0.45 }, { 1.00, 0.84, 0.10 },
-    { 0.78, 0.52, 0.03 }, { 0.32, 0.20, 0.02 },
+    { 1.00, 1.00, 0.94 }, { 1.00, 0.94, 0.48 }, { 1.00, 0.72, 0.15 },
+    { 0.70, 0.40, 0.09 }, { 0.31, 0.20, 0.16 },
   },
 }
 
--- ------- the silhouettes
---
--- A particle used to be four rectangles: two crossed bars whose overlap
--- knocked the corners off a square, the body inset in that, and a lit
--- square for the core. It read as round at a glance and as a box the moment
--- you stopped to look at one, which is not what a puff of smoke or a tongue
--- of flame is shaped like.
---
--- These are ROWS instead. One filled rectangle per scanline, its width read
--- out of a shape table, so the outline is whatever curve the table
--- describes and the fill still costs one draw call per row rather than one
--- per pixel. A puff is a DISC. A flame is a TEARDROP -- pinched to a point
--- at the tip, widest about two thirds of the way down, rounded off at the
--- base -- so it reads as a flame from its outline alone, standing still, in
--- a single frame.
---
--- Widths are worked out once at load and never again: a disc row is a
--- square root, and a square root per row per particle per frame is the one
--- cost a decoration cannot run up. Indexed by diameter, so `DISC[6][3]` is
--- how wide the third row of a six-pixel puff is.
-local DISC, TEAR = {}, {}
-for d = 1, 8 do
-  local r, disc, tear = d / 2, {}, {}
-  -- where the teardrop is at its widest: about two thirds down, which is
-  -- where a flame's shoulder sits before it rounds into its base
-  local waist = d * 0.68
-  for i = 0, d - 1 do
-    local mid = i + 0.5
-    local dy = mid - r
-    disc[i + 1] = math.max(1, math.floor(math.sqrt(math.max(0, r * r - dy * dy)) * 2 + 0.5))
-    local w
-    if mid <= waist then
-      -- the pinch: a power curve rather than a straight line, so the tip is
-      -- a point and the shoulder is a shoulder instead of a triangle
-      w = d * (mid / waist) ^ 0.62
-    else
-      -- and the base is a quarter-circle off the same radius, so the bottom
-      -- is round rather than chopped
-      local t = (mid - waist) / math.max(0.5, d - waist)
-      w = d * math.sqrt(math.max(0, 1 - t * t * 0.72))
+-- Original pixel art: 1 = rim, 2 = body, 3 = light, . = clear.
+-- Each phase changes the silhouette as well as the lighting. Clouds roll,
+-- flames split and lean, and lightning jumps between forked channels.
+local ART = {
+  dust = {
+    { "..111...", ".13321..", "1333321.", "12332211", "12222221", ".122221.", "..1111..", "........" },
+    { "...11...", ".11331..", "1333321.", "12332221", "12221221", ".122221.", "..1111..", "........" },
+    { "..111...", ".133211.", "13332231", "12322221", ".122221.", "..1221..", "...11...", "........" },
+  },
+  fire = {
+    { ".....1..", "....21..", ".1.121..", ".21221..", "1223221.", "12333221", ".2333321", "..12221." },
+    { "..1.....", "..21..1.", "..22121.", ".122221.", ".2233221", "12333321", "1233321.", ".12221.." },
+    { "....1...", ".1..21..", ".21.221.", ".222221.", "1223321.", "12333321", ".2333221", "..12221." },
+  },
+  bolt = {
+    { "......1..", ".....21..", "....231..", "...231...", "..2331..1", "...231.21", "....2321.", "...2331..", "..2331...", "...231...", "....1...." },
+    { "..1......", "..12.....", "...132...", "....132..", "1..1332..", "12..132..", ".12332...", "..1332...", "...1332..", "....132..", ".....1..." },
+    { ".....1...", "....21...", "...231...", "..2331...", "...231..1", "....23221", "...2331..", "..2331...", "...231...", "....21...", "....1...." },
+  },
+}
+
+-- Compile nearest-neighbour size variants into disjoint horizontal runs.
+-- Every pixel is composited once, avoiding muddy translucent overpainting.
+-- Rendering allocates no masks and performs no per-pixel table traversal.
+local FRAMES = {}
+for kind, phases in pairs(ART) do
+  FRAMES[kind] = {}
+  for size = 1, 8 do
+    local width = kind == "bolt" and (size * 3 - 2) or size
+    local height = kind == "bolt" and (size * 3 + 2) or size
+    local variants = {}
+    for phase, rows in ipairs(phases) do
+      local runs = {}
+      for y = 0, height - 1 do
+        local row = rows[math.floor(y * #rows / height) + 1]
+        local x = 0
+        while x < width do
+          local ink = row:sub(math.floor(x * #row / width) + 1,
+                              math.floor(x * #row / width) + 1)
+          local start = x
+          repeat
+            x = x + 1
+            local at = math.floor(x * #row / width) + 1
+            if x >= width or row:sub(at, at) ~= ink then break end
+          until false
+          if ink ~= "." then
+            runs[#runs + 1] = { x = start, y = y, w = x - start,
+                                 ink = tonumber(ink) }
+          end
+        end
+      end
+      -- Tiny tail particles must remain legible even when sampling misses
+      -- a narrow tongue or spark in the full-size drawing.
+      if #runs == 0 then runs[1] = { x = 0, y = height - 1, w = 1, ink = 2 } end
+      variants[phase] = { runs = runs, width = width, height = height }
     end
-    tear[i + 1] = math.max(1, math.floor(w + 0.5))
+    FRAMES[kind][size] = variants
   end
-  DISC[d], TEAR[d] = disc, tear
 end
 
 -- ------- how long a trail is
@@ -296,8 +286,8 @@ local SPRITE_W, SPRITE_TOP, SPRITE_BOT = 16, -4, 12
 -- How far a particle reaches from its own centre, which is what the box has
 -- to be grown by before asking whether the mark is on the character: a
 -- CENTRE outside the sprite says nothing when the rows around it are drawn
--- four pixels out. A puff and a flame are symmetric; a bolt is a jagged line
--- climbing BOLT_JOINTS * BOLT_RISE pixels UPWARD from its base, so it
+-- four pixels out. Puffs and flames fit an eight-pixel square; a bolt is a jagged line
+-- climbing ten pixels UPWARD from its base, so it
 -- reaches far above its centre and barely at all below.
 local REACH = {
   dust = { x = 4, up = 4, down = 4 },
@@ -310,13 +300,6 @@ local REACH = {
 -- `startDustAnim` hands out 32 frames, which is right for a boulder being
 -- shoved and far too long for a footfall at four frames a tile.
 local PUFF_FRAMES = 10
-
--- A bolt is not a blob and not a stack of dots: it is a jagged line, drawn
--- upward from the spawn point as five joints whose sideways kick alternates
--- and grows. Re-picked every other frame from the particle's own seed, so
--- it crackles into a new shape rather than sitting there being a shape.
-local BOLT_JOINTS = 5
-local BOLT_RISE = 2      -- world pixels between joints
 
 -- Cosmetic randomness gets its own generator on purpose. The engine draws
 -- wild encounters and every battle roll from love.math.random, and a trail
@@ -1059,9 +1042,7 @@ return function(mod)
   -- Six hues rather than a continuous sweep, and three flat shades each:
   -- a smooth gradient reads as somebody else's engine, and this has to sit
   -- next to a Game Boy.
-  -- The ribbon's six stripes: one flat colour each, no shading. A Nyan
-  -- Cat rainbow is poster paint, and a gradient here would read as a
-  -- smear rather than as a band.
+  -- Six saturated bands, each edged with one discrete light and shade.
   local RAINBOW_BAND = {
     { 1.00, 0.22, 0.22 }, { 1.00, 0.60, 0.12 }, { 1.00, 0.92, 0.16 },
     { 0.24, 0.78, 0.28 }, { 0.20, 0.50, 0.98 }, { 0.62, 0.30, 0.92 },
@@ -1243,7 +1224,7 @@ return function(mod)
     -- the other is almost always this.
     -- ------- the ribbon, drawn under everything else
     --
-    -- Six flat stripes across the direction of travel, one rectangle each,
+    -- Six stripes across the direction of travel,
     -- laid at every recorded point. The segment is a little longer than
     -- the distance covered in a tick so consecutive points OVERLAP -- a
     -- band with gaps in it is a dashed line, not a rainbow.
@@ -1252,6 +1233,13 @@ return function(mod)
       local step = 16 / frames
       local seg = step + 2
       local band = #RAINBOW_BAND * RIBBON_STRIPE
+      local bx1, by1 = player.px, player.py + SPRITE_TOP
+      local bx2, by2 = player.px + SPRITE_W, player.py + SPRITE_BOT
+      local function ribbonPut(x, y, w, h)
+        if not (x < bx2 and x + w > bx1 and y < by2 and y + h > by1) then
+          put(x, y, w, h)
+        end
+      end
       for i = 1, #ribbon do
         local r = ribbon[i]
         -- Solid, except for a short taper at the far end: a rainbow that
@@ -1261,7 +1249,6 @@ return function(mod)
         local alpha = fade
         for k = 1, #RAINBOW_BAND do
           local c = RAINBOW_BAND[k]
-          love.graphics.setColor(c[1], c[2], c[3], alpha)
           local off = -band / 2 + (k - 1) * RIBBON_STRIPE
           local rx, ry, rw, rh
           if r.dx ~= 0 then
@@ -1275,11 +1262,47 @@ return function(mod)
           -- would bury him. Skipping the stripes his 16x16 box covers
           -- leaves him standing clear with the ribbon coming out from
           -- behind, which is what being underneath looks like.
-          local bx1, by1 = player.px, player.py + SPRITE_TOP
-          local bx2, by2 = player.px + SPRITE_W, player.py + SPRITE_BOT
           if not (rx < bx2 and rx + rw > bx1
                   and ry < by2 and ry + rh > by1) then
-            put(rx, ry, rw, rh)
+            love.graphics.setColor(c[1], c[2], c[3], alpha)
+            if r.dx ~= 0 then
+              ribbonPut(rx, ry + 1, rw, rh - 2)
+            else
+              ribbonPut(rx + 1, ry, rw - 2, rh)
+            end
+            love.graphics.setColor(c[1] + (1 - c[1]) * 0.28,
+              c[2] + (1 - c[2]) * 0.28, c[3] + (1 - c[3]) * 0.28, alpha)
+            ribbonPut(rx, ry, r.dx ~= 0 and rw or 1, r.dx ~= 0 and 1 or rh)
+            love.graphics.setColor(c[1] * 0.82, c[2] * 0.82, c[3] * 0.82, alpha)
+            if r.dx ~= 0 then
+              ribbonPut(rx, ry + rh - 1, rw, 1)
+            else
+              ribbonPut(rx + rw - 1, ry, 1, rh)
+            end
+          end
+        end
+      end
+      -- World-anchored glints stay put when old points retract or hit the cap.
+      for i = 1, #ribbon do
+        local r = ribbon[i]
+        local along = r.dx ~= 0 and r.x or r.y
+        if along % 24 < step then
+          local cross = r.dx ~= 0 and r.y or r.x
+          local seed = math.floor(along / 24) * 7 + math.floor(cross / 8) * 3
+          local phase = (math.floor(ticks / 5) + seed) % 8
+          if phase < 4 then
+            local offset = (seed % 5 - 2) * 4
+            local axis = math.floor(along / 24) * 24 + step / 2
+            local x = r.dx ~= 0 and axis or r.x + offset
+            local y = r.dx ~= 0 and r.y + offset or axis
+            love.graphics.setColor(1, 1, 0.94, math.min(i, 8) / 8)
+            ribbonPut(x, y, 1, 1)
+            if phase == 1 or phase == 2 then
+              ribbonPut(x - 2, y, 2, 1)
+              ribbonPut(x + 1, y, 2, 1)
+              ribbonPut(x, y - 2, 1, 2)
+              ribbonPut(x, y + 1, 1, 2)
+            end
           end
         end
       end
@@ -1294,45 +1317,19 @@ return function(mod)
     -- behind a running player is still there, because all three are the
     -- engine's own drawing rather than ours.
 
-    -- ------- the trail
-    --
-    -- A particle is a rim, a body and a lit core -- three shades off the
-    -- same ramp window -- laid on as three passes of NARROWING ROWS over one
-    -- of the shape tables at the top of this file: the rim draws the whole
-    -- outline, the body the same rows inset a pixel so the rim survives as
-    -- an edge, the core inset two more over the band of rows where the thing
-    -- is actually bright.
-    --
-    -- Rows rather than a per-pixel mask, for the same reason the four
-    -- rectangles this replaces were four: it runs once per particle per
-    -- frame on a phone, and a 7x7 mask at seventy live particles is three
-    -- thousand draw calls for a decoration. A six-pixel puff is twelve, and
-    -- unlike the four it is actually round.
-    local function shaded(shape, cx, top, rim, body, core, alpha, lit)
-      local n = #shape
-      love.graphics.setColor(rim[1], rim[2], rim[3], alpha)
-      for i = 1, n do
-        local w = shape[i]
-        put(cx - w / 2, top + i - 1, w, 1)
-      end
-      if n >= 4 then
-        love.graphics.setColor(body[1], body[2], body[3], alpha)
-        for i = 2, n - 1 do
-          local w = shape[i] - 2
-          if w >= 1 then put(cx - w / 2, top + i - 1, w, 1) end
+    -- Draw compiled palette runs on the existing world-pixel projection.
+    local function sprite(kind, size, phase, x, y, core, body, rim, alpha)
+      local frame = FRAMES[kind][size][phase]
+      local left = x - frame.width / 2
+      local top = kind == "bolt" and y - frame.height + 1 or y - frame.height / 2
+      local previous
+      for _, run in ipairs(frame.runs) do
+        if run.ink ~= previous then
+          local shade = run.ink == 3 and core or (run.ink == 2 and body or rim)
+          love.graphics.setColor(shade[1], shade[2], shade[3], alpha)
+          previous = run.ink
         end
-      end
-      if n >= 5 then
-        -- The lit core sits where the thing is actually bright rather than
-        -- in the middle: low in a flame, which is hottest at its base, high
-        -- in a puff of smoke, which catches the light on top. `lit` says
-        -- which row, as a fraction of the height.
-        love.graphics.setColor(core[1], core[2], core[3], alpha)
-        local at = math.floor(lit * n + 0.5)
-        for i = math.max(2, at - 1), math.min(n - 1, at + 1) do
-          local w = shape[i] - 4
-          if w >= 1 then put(cx - w / 2, top + i - 1, w, 1) end
-        end
+        put(left + run.x, top + run.y, run.w, 1)
       end
     end
 
@@ -1365,49 +1362,13 @@ return function(mod)
       local alpha = 0.30 + 0.70 * (p.life / p.max)
       local age = p.max - p.life
 
-      if onSprite(p) then                     -- behind the player, or not at all
-        -- nothing
-      elseif p.kind == "bolt" then
-        -- Lit on alternate ticks, and re-drawn to a different jag each
-        -- time: a spark that burns steadily in one shape for ten frames is
-        -- a lamp, not lightning.
-        if p.life % 2 == 1 then
-          local kick, x, y = 0, p.x, p.y
-          for j = 1, BOLT_JOINTS do
-            -- deterministic from the particle's own seed and the frame, so
-            -- the whole arc re-jags together instead of each joint
-            -- twitching on its own
-            kick = ((p.seed + j * 7 + age) % 5) - 2
-            local nx, ny = x + kick, y - BOLT_RISE
-            local shade = j <= 2 and core or (j <= 4 and body or rim)
-            love.graphics.setColor(shade[1], shade[2], shade[3], alpha)
-            -- one rectangle per joint, spanning the gap it just crossed,
-            -- and thinning as it climbs: a bolt is thick where it leaves
-            -- the ground and a hair at its tip, which is the difference
-            -- between lightning and a ladder
-            put(math.min(x, nx), ny,
-                math.abs(kick) + math.max(1, size + 2 - j), BOLT_RISE + 1)
-            x, y = nx, ny
-          end
+      if not onSprite(p) then
+        local phase = 1 + ((math.floor(age / 3) + p.seed) % 3)
+        if p.kind ~= "bolt" or p.life % 2 == 1 then
+          local artSize = p.kind == "fire" and math.min(8, size + 1) or size
+          sprite(p.kind, artSize, phase, p.x, p.y, core, body, rim, alpha)
           drew = drew + 1
         end
-      elseif p.kind == "fire" then
-        -- A tongue rather than a ball, and now shaped like one: the
-        -- teardrop is pinched to a point at the tip and rounded at the
-        -- base, so a flame reads as a flame in a single still frame. The
-        -- lit core sits low, where a flame is hottest.
-        local h = math.min(8, size + 1)
-        shaded(TEAR[h], p.x, p.y - h / 2, rim, body, core, alpha, 0.80)
-        drew = drew + 1
-      else
-        -- Smoke sways as it rises. The sway comes off the particle's age
-        -- and its own seed, so no two puffs lean the same way at the same
-        -- time and none of it needs storing. A disc rather than a boxy
-        -- blob, with the highlight up top where a puff catches the light.
-        local sway = math.sin(age * 0.22 + p.seed) * 1.6
-        local d = math.min(8, size)
-        shaded(DISC[d], p.x + sway, p.y - d / 2, rim, body, core, alpha, 0.30)
-        drew = drew + 1
       end
     end
 

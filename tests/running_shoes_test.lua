@@ -683,17 +683,16 @@ end
 -- four screen pixels, the player's cell origin lands at `width/2 - 16*4` =
 -- 256 across and `height/2 - 8*4` = 256 down, and `SpriteRenderer:draw` puts
 -- his 16x16 frame at (px, py - 4) -- so the character occupies 256..320
--- across and 240..304 down, and no mark of ours may be CENTRED anywhere in
--- that rectangle. A row is drawn from its left edge, so its centre is
--- x + w/2, which is exactly what the recorder above keeps.
+-- across and 240..304 down. Test the complete painted rectangle so even
+-- a single edge pixel crossing onto the player is caught.
 local SPRITE_L, SPRITE_R = 256, 320
 local SPRITE_T, SPRITE_B = 240, 304
 
 local function marksOnSprite()
   local n = 0
   for _, m in ipairs(marks) do
-    local cx, cy = m.x + (m.w or 0) / 2, m.y + (m.h or 0) / 2
-    if cx >= SPRITE_L and cx <= SPRITE_R and cy >= SPRITE_T and cy <= SPRITE_B then
+    if m.x < SPRITE_R and m.x + m.w > SPRITE_L
+       and m.y < SPRITE_B and m.y + m.h > SPRITE_T then
       n = n + 1
     end
   end
@@ -704,7 +703,7 @@ end
 -- it is a jagged line drawn UPWARD from its spawn point, so it reaches
 -- eleven pixels above its own centre where a puff reaches four, and a guard
 -- written around the centre alone lets exactly that case through.
-for _, kind in ipairs({ "dust", "fire", "bolt" }) do
+for _, kind in ipairs({ "dust", "fire", "bolt", "rainbow" }) do
   for _, dir in ipairs({ "right", "left", "down", "up" }) do
     setOpt("fx", kind)
     Runtime.emit("map.exited", {})
@@ -748,6 +747,18 @@ local function runAcross(ticks)
   return sped
 end
 
+-- A ribbon retains the route while running, then retracts completely.
+setOpt("fx", "rainbow")
+runAcross(30)
+hud()
+local shortRibbon = trailCells()
+runAcross(80)
+hud()
+T.check(trailCells() > shortRibbon + 3, "rainbow retains a growing route beyond the particle lifetime")
+runner.moving = false
+runTicks(40)
+T.eq(hud(), 0, "rainbow retracts completely after the runner stops")
+runner.moving = true
 setOpt("fx", "fire")
 
 -- x2: a 16-frame walk becomes an 8-frame step

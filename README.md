@@ -6,14 +6,26 @@ Gen 3 handed you running shoes in the first five minutes. Gen 1 made you
 walk to Cerulean, beat a gym, and buy a bicycle voucher off a man in a
 skyscraper. This evens things up slightly.
 
-## New in 1.4.0 — a run that leaves something behind
+## New in 1.10.0 — sharper trails, brighter rainbow
+
+**DUST**, **FLAMES** and **BOLTS** use original animated pixel art: rolling
+puffs, split flame tongues and forked lightning, with distinct highlights
+and transparent gaps that keep the silhouettes clear.
+
+**RAINBOW** keeps its six-stripe ribbon, now with shaded stripes and sparse
+sparkles. It traces your run and retracts from the oldest end when you
+stop; long runs retain the most recent 600 path points. All four effects
+work on Gen 1 and Pokémon Gold.
+
+## A run that leaves something behind
 
 Three extras, and **every one of them has an off switch**, on the mod's own
 options page. Nothing here is permanent and nothing is forced on you.
 
 **A trail off your heels while you run.** Pick **smoke**, **flames** or
 **lightning** — it reaches about three and a half cells back and fades the
-whole way out. Set `RUN FX` to `OFF` and the picture is exactly what it was
+whole way out — or a **rainbow ribbon** that traces the route. Set `RUN FX`
+to `OFF` and the picture is exactly what it was
 before; the trail draws over the finished frame and changes nothing
 underneath it, not a tile, not a flag, and not one roll of the dice that
 decide encounters.
@@ -106,7 +118,7 @@ Hold **B** while walking. That is the whole interface.
 | `RUN SPEED` | x1.5 / **x2** / x3 / x4 | how much shorter a step gets |
 | `BOOST BIKE` | off | whether the bicycle gets it too |
 | `BOOST SURF` | off | whether surfing does |
-| `RUN FX` | off / **dust** / flames / bolts | what a run leaves behind you |
+| `RUN FX` | off / **dust** / flames / bolts / rainbow | what a run leaves behind you |
 | `BURN GRASS` | **off** | running across tall grass cuts it |
 | `SAFE GRASS` | **off** | running through tall grass meets nothing |
 
@@ -115,8 +127,8 @@ and the other two ship off already.
 
 ## The three extras
 
-**`RUN FX`** leaves a trail off your heels while you hold B, reaching about
-**three and a half cells back** and fading the whole way out.
+**`RUN FX`** leaves a trail while you hold B. Dust, flames and bolts reach
+about **three and a half cells back** and fade the whole way out.
 
 All three go **big at the heel and taper to a point at the tail**, so you
 can tell which end the player is at from a still frame, and all three show
@@ -124,24 +136,30 @@ on any ground — not just over tall grass.
 
 | | |
 | --- | --- |
-| `DUST` | smoke — a disc, greys, swaying as it rises, its highlight up top where a puff catches the light. |
-| `FLAMES` | a teardrop: pinched to a point at the tip, widest about two thirds down, rounded at the base, its lit core low where a flame is hottest. |
-| `BOLTS` | a jagged line of five joints, thick where it leaves the ground and a hair at its tip, re-picked every other frame so it crackles into a new shape instead of blinking. |
+| `DUST` | rolling, irregular puffs with warm highlights and cool shadows. |
+| `FLAMES` | split tongues that lean and flicker around a bright core. |
+| `BOLTS` | forked lightning that changes channels and shrinks into sparks. |
+| `RAINBOW` | a six-stripe ribbon with shaded bands and sparse sparkles, following the path and retracting from its oldest end when you stop. |
 
-Each particle is a shaded sprite rather than a coloured square: a dark rim,
-a body and a lit core, drawn as one filled row per scanline off a shape
-table, so the outline is a real curve rather than a box with its corners
-knocked off.
+The three particle effects each have three authored animation frames, with
+a dark rim, a body and a lit core. Their masks preserve transparent gaps;
+each visible pixel is composited once so overlapping shade layers do not
+muddy the artwork.
 
 All three shades come off **one five-step ramp per kind**, and a particle
 draws from a three-shade *window* onto it — the window sliding down the
 ramp as the particle ages, so a flame starts white-yellow and ends an ember
 without any colour ever being interpolated.
 
-The trail is shed **a cell and a quarter behind your heels**, and nothing it
+The particle trail is shed **a cell and a quarter behind your heels**, and nothing it
 draws is ever allowed inside your own sprite's box — `RUN FX` composites over
 the finished frame, so a mark in that box would be a mark *on* the character
 rather than behind him.
+
+The rainbow instead meets the character's centre, skipping the sprite's
+box to leave the player visible. Its six four-pixel stripes form a
+24-pixel-wide band. It keeps up to 600 path points while you run, then
+retracts from the far end rather than fading everywhere at once.
 
 Every kind also leaves the engine's own dust puff on the cell you have just
 left — the same animation `CUT` leaves on grass. That is drawn in the world
@@ -198,17 +216,16 @@ one before/after pair tile by tile gives the ground the grass was standing
 on, and with that single tile id **every** cell you run over is cut, so the
 path is unbroken.
 
-What you cut is written into `mod.save` and travels with your save file, so
-entering the map again re-applies it.
+Cuts last while the map is loaded, like the engine's own CUT. Leave and
+return and the grass grows back; old saved cut records are cleared.
 
 **`SAFE GRASS`** is the smaller version of the same idea with nothing
 permanent about it: while you are running, tall grass never starts a wild
 battle. Walk and it is as dangerous as it ever was.
 
-Both suppress the battle by throwing the vanilla dice first and *discarding*
-the answer, so a suppressed step draws from the RNG exactly what a vanilla
-step would have drawn. Only the battle is missing; the stream underneath it
-is where the engine left it.
+`SAFE GRASS` throws the vanilla dice first and *discards* the answer, so a
+suppressed step draws from the RNG exactly what a vanilla step would have
+drawn. `BURN GRASS` instead removes the grass before the encounter check.
 
 ## The numbers, since you asked
 

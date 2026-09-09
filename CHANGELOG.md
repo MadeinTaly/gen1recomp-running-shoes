@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.10.0 -- animated pixel art and a polished rainbow
+
+Dust, flames and bolts now use original animated pixel masks: rolling
+puffs, split flame tongues and forked lightning, with refined palettes
+and clean transparent gaps.
+
+The rainbow keeps its six-stripe route ribbon, with refined stripe shading
+and sparse sparkles. It still retains up to 600 path points while running
+and retracts from the oldest end when you stop. Gen 1 and Gold support,
+player visibility and the existing camera guards are preserved.
+
 ## 1.9.2 -- the rainbow was invisible on Gen 1
 
 It drew before the surface was made safe. The overlay pushes the graphics
