@@ -1,11 +1,12 @@
 {
   "id": "running_shoes",
   "name": "Running Shoes",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "api": 2,
   "games": [
     "gen1",
-    "gen2"
+    "gen2",
+    "gen3"
   ],
   "entry": "main.lua",
   "profile": "content",
@@ -20,6 +21,6 @@
   "permissions": [
     "engine_internals"
   ],
-  "description": "Hold B to walk faster, at a speed you pick: x1.5, x2, x3 or x4. Rides the engine's own movement.speed hook, whose comment names running shoes as the reason it exists. A run can leave animated pixel-art smoke, flames or lightning off your heels, reaching about three and a half cells back, or a shaded six-colour rainbow ribbon with sparkles that follows the full route and retracts when you stop; it can CUT the tall grass you run across, one clod at a time, the way the CUT move cuts it, so that grass has no Pokemon left in it; and it can carry you through tall grass without ever starting a wild battle. Every one of those has an off switch, the last two ship off, and with all three left alone nothing but the duration of a step changes. Optional boosts for the bicycle and for surfing too. Runs on Pokemon Gold too, and as of 1.6.0 every row works there: RUN SPEED, BOOST BIKE, BOOST SURF, SAFE GRASS, CUT GRASS and RUN FX all cross over. 1.7.0 adds the Dramatic Shape voxel mod's first- and third-person cameras, which replace the grid walk with a continuous one and used to leave every row of this mod silent; the speed, CUT GRASS and SAFE GRASS all work inside them now. RUN FX still cannot: a 2D overlay cannot follow a 3D camera.",
+  "description": "Hold B to walk faster, at a speed you pick: x1.5, x2, x3 or x4. Rides the engine's own movement.speed hook. Runs on every game the engine runs: Red, Blue, Yellow, Gold, Ruby, Sapphire, Emerald, FireRed and LeafGreen. A run can leave a tail of dust, flames or lightning, or a rainbow that comes out of the runner, passes under the sprite and is drawn back in when you stop. BURN GRASS cuts the tall grass you run across, the way CUT does, and SAFE GRASS carries you through it without a wild battle. TRAIL STATUS makes a wild Pokemon you meet at a run start the battle hit by your trail: flames burn, bolts paralyze, the rainbow confuses, and dust raises a sandstorm on Gen 3 or lowers accuracy on Gen 1 and 2. On Emerald, playing as the boy, SHOE MODEL and SHOE COLOUR put seven pairs in nine colours on your own feet. Every one of those has an off switch, the ones that change the game ship off, and with them left alone only the duration of a step changes. Optional boosts for the bicycle and for surfing too.",
   "github": "MadeinTaly/gen1recomp-running-shoes"
 }

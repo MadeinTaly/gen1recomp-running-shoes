@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.11.0 -- Gen 3, tails, and trails that bite
+
+**Now on Gen 3.** Ruby, Sapphire, Emerald, FireRed and LeafGreen
+(`"games": ["gen1", "gen2", "gen3"]`). RUN SPEED counts from walking in every
+generation, so on Gen 3 x2 is the cart's own run, x3 is 5 frames a step and x4
+is 4. x1.5 never slows the cart's run down. Holding B runs before the game has
+given you shoes. Ledge hops, surf hops, diving and the places where the cart
+forbids running keep their own timing.
+
+**TRAIL STATUS**, a new option, off by default. A wild Pokemon you meet while
+running with a RUN FX starts the battle hit by your trail: FLAMES burn, BOLTS
+paralyze, RAINBOW confuses, DUST raises a sandstorm on Gen 3 and lowers accuracy
+one stage on Gen 1 and 2. Each generation applies it through its own battle
+code, so a Pokemon immune to a status stays immune. With BURN GRASS on as well,
+the cell is cut as you leave it, so you can still meet something on it.
+
+**Every trail is a tail now.** Dust, flames, bolts and the rainbow come out of
+the runner with no gap and narrow towards the far end. On Gen 2 and 3 they are
+drawn in the world pass, under the sprites. On Gen 1, whose palette pass would
+grey them there, they are painted over the frame with every sprite's exact
+silhouette left out, so the result is the same. The rainbow stays attached and
+is drawn back into the runner when you stop, in about a second whatever its
+length. The engine's dust puff is gone from the trail: it landed a cell behind.
+
+**Gen 1 and 2 look like Game Boy.** Flat colours and whole pixels: no fades, no
+highlights and no sparkles on those trails.
+
+**Gen 3 art.** All four trails use new sprites at the cart's resolution. The
+rainbow is 36 pixels tall with a square wave.
+
+**SHOE MODEL and SHOE COLOUR**, Emerald only and for the boy for now: seven
+models in nine colours, drawn on the feet of every frame of the player's own
+sprite and covered by tall grass the way feet are. Off by default. May and the
+other carts have different feet: the rows do not appear on the other carts, and
+on Emerald playing as May they do nothing yet.
+
+**WHAT'S NEW.** Three pages on Gen 3, two on Gen 1 and 2. They open on the first
+run after an update or an install, once per save: A reads on, B closes.
+
+Not played: Ruby, Sapphire, FireRed, Blue and Yellow. Emerald, LeafGreen, Red and
+Gold were played; TRAIL STATUS, BURN GRASS and SAFE GRASS were measured on
+Emerald, and TRAIL STATUS on Red and Gold as well.
+
 ## 1.10.0 -- animated pixel art and a polished rainbow
 
 Dust, flames and bolts now use original animated pixel masks: rolling

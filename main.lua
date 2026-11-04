@@ -313,7 +313,18 @@ local function rnd()
 end
 
 return function(mod)
-  mod.options:define({
+  -- Gen 3 is its own arm wherever the picture or the map is touched: a 240x160
+  -- full-colour frame, 16x32 sprites and metatiles rather than Game Boy blocks.
+  local GENERATION = mod.generation
+  if GENERATION == nil then
+    local okGen, generation = pcall(function()
+      return require("src.core.GameVersion").generation()
+    end)
+    GENERATION = okGen and generation or 1
+  end
+  local GEN3 = GENERATION == 3
+
+  local optionRows = {
     -- Values are divisors of the step duration, which is why x2 lands
     -- exactly on the bicycle's own 8 frames.
     { key = "speed", label = "RUN SPEED", type = "choice", default = "2",
@@ -342,7 +353,30 @@ return function(mod)
     -- These two change the game rather than the picture, so they are off.
     { key = "burn", label = "BURN GRASS", type = "toggle", default = false },
     { key = "safe", label = "SAFE GRASS", type = "toggle", default = false },
-  })
+    -- A wild Pokemon met at a run starts the battle hit by your trail.
+    { key = "trail_status", label = "TRAIL STATUS", type = "toggle", default = false },
+  }
+  -- Worn shoes are drawn on one sheet's own feet, so a row only exists where that
+  -- sheet does. For now that is Emerald's Brendan; the other carts' sprites have
+  -- different feet, and a row there would be a switch that does nothing.
+  local okCart, cart = pcall(function() return require("src.core.GameVersion").get() end)
+  local OTHER_CART = { firered = true, leafgreen = true, ruby = true, sapphire = true }
+  local SHOES_HERE = GEN3 and not (okCart and OTHER_CART[cart])
+  if SHOES_HERE then
+    optionRows[#optionRows + 1] = { key = "shoe_model", label = "SHOE MODEL",
+      type = "choice", default = "off", choices = {
+        { "OFF", "off" }, { "SNEAKERS", "sneaker" }, { "BOOTS", "boot" },
+        { "WINGED", "winged" }, { "SKATES", "skate" }, { "SANDALS", "sandal" },
+        { "CLOWN", "clown" }, { "ROCKET", "rocket" },
+      } }
+    optionRows[#optionRows + 1] = { key = "shoe_color", label = "SHOE COLOUR",
+      type = "choice", default = "red", choices = {
+        { "RED", "red" }, { "ORANGE", "orange" }, { "YELLOW", "yellow" },
+        { "GREEN", "green" }, { "BLUE", "blue" }, { "PURPLE", "purple" },
+        { "PINK", "pink" }, { "WHITE", "white" }, { "BLACK", "black" },
+      } }
+  end
+  mod.options:define(optionRows)
 
   local function factor()
     local ok, value = pcall(function() return mod.options:get("speed") end)
@@ -489,6 +523,10 @@ return function(mod)
   -- `world.stepped` carries a payload and no game, and the cut needs the
   -- dataset and the running map; this is how it gets there.
   local live
+
+  -- TRAIL STATUS: what the next wild battle starts with, and the cell a deferred
+  -- cut is still waiting to take.
+  local pendingTrail, lastCell
 
   local function restore()
     local player = tracked
@@ -838,7 +876,37 @@ return function(mod)
     return true
   end
 
+  -- ------- cutting the grass on Gen 3
+  --
+  -- The easy one: a Gen 3 metatile is one 16px cell, so there is no clod to
+  -- assemble. The cart's own CUT tables say what each grass metatile becomes
+  -- (`cutGrassMetatile` on Hoenn, `CUT_GRASS_METATILES` on Kanto), and
+  -- Field.setMetatile is the write CUT makes. `Map.load` clears those overrides
+  -- (fieldmap.c:103), so the grass grows back when you leave, as it does on CUT.
+  local function cutGrassAtGen3(cx, cy)
+    local Collision = require("src.core.game3.collision")
+    if not Collision.isGrass(cx, cy) then return false end
+    local def = require("src.core.game3.map").currentDef()
+    local layout = def and def.midLayout
+    if not layout then return false end
+    local FieldMoves = require("src.core.game3.field_moves")
+    local mid = layout:midAt(cx, cy)
+    local to
+    if FieldMoves.isRse() then
+      to = FieldMoves.cutGrassMetatile(mid)
+    else
+      to = FieldMoves.CUT_GRASS_METATILES[mid]
+    end
+    if not to then return false end
+    require("src.core.game3.field").setMetatile(cx, cy, to, false)
+    return true
+  end
+
   local function cutGrassAt(game, cx, cy, quiet)
+    if GEN3 then
+      local ok, cut = pcall(cutGrassAtGen3, cx, cy)
+      return ok and cut
+    end
     if isGen2Game(game) then
       local world = game and game.world
       local map = world and world.map
@@ -879,7 +947,11 @@ return function(mod)
   -- A FLAG, not a pinstripe. Four pixels a stripe puts the band at 24 --
   -- half again as wide as a cell -- which is what "enorme" asks for and
   -- what makes six colours legible at Game Boy scale in the first place.
-  local RIBBON_STRIPE = 4                    -- pixels per colour band
+  -- Three a stripe makes the band 18 tall, the height of the sprite it comes out
+  -- of, so it reads as his wake rather than as a flag he is carrying.
+  local RIBBON_STRIPE = 3                    -- pixels per colour band
+  -- The far end narrows over this many points, in eight steps, like a comet's tail.
+  local RIBBON_TAPER = 96
 
   -- And it runs the whole route rather than three cells of it. The
   -- particle trail is short on purpose -- a puff of dust that outlived the
@@ -900,7 +972,12 @@ return function(mod)
   -- then disappears along the trail" written as a rule rather than as a
   -- number.
   local RIBBON_MAX = 600
-  local RIBBON_RETRACT = 3        -- points dropped per tick once you stop
+  local RIBBON_RETRACT = 3        -- fewest points dropped per tick once you stop
+  local RIBBON_ABSORB_TICKS = 60  -- a band of any length is home in about this long
+  -- A step ends and the next begins with a tick between them where nobody is
+  -- moving. That is not stopping, so the band waits this long before coming in.
+  local RIBBON_GRACE = 3
+  local ribbonLaidAt = -100
 
   local ribbonHot = false
 
@@ -921,7 +998,8 @@ return function(mod)
     -- which at 24 wide reads as the rainbow sagging past his feet.
     ribbon[#ribbon + 1] = {
       x = player.px + SPRITE_W / 2,
-      y = player.py + (SPRITE_TOP + SPRITE_BOT) / 2,
+      -- Gen 3's sprite stands 16x32 on its cell, so its middle is lower down.
+      y = player.py + (GEN3 and 0 or (SPRITE_TOP + SPRITE_BOT) / 2),
       dx = d[1], dy = d[2],
     }
     -- the same ceiling the particles keep: a decoration may not run the
@@ -972,8 +1050,11 @@ return function(mod)
       -- `px`,`py` is the top-left of the 16x16 cell, so +8/+12 is about
       -- where the feet are -- and then BEHIND back along the way he is
       -- going, which is what keeps the mark out of his own sprite box
-      x = player.px + 8 - d[1] * BEHIND + ax * spread + (rnd() * 3 - 1.5),
-      y = player.py + 12 - d[2] * BEHIND + ay * spread + (rnd() * 3 - 1.5),
+      -- ON the feet, not behind them: every trail is now drawn under the sprite,
+      -- so there is nothing to keep clear of and no gap for it to open up. It
+      -- comes out of the runner the way a meteor's tail comes out of the meteor.
+      x = player.px + 8 + ax * spread * 0.4,
+      y = player.py + (GEN3 and 13 or 8) + ay * spread * 0.4,
       -- Barely any drift: a trail is something LEFT BEHIND, so it stays
       -- where it was shed and the player runs away from it. Give it a push
       -- backwards as well and the far end races the player, which is what
@@ -1006,10 +1087,20 @@ return function(mod)
     -- The ribbon does not age; it RETRACTS. While a point was laid this
     -- tick the band is whole, and the moment it was not the far end starts
     -- rolling back -- oldest first, which is the end furthest from you.
+    --
+    -- It comes back in at a pace set by how long it is, so that a whole route
+    -- is reabsorbed in about a second rather than crawling home for four.
     if not ribbonHot then
-      for _ = 1, RIBBON_RETRACT do
-        if #ribbon == 0 then break end
-        table.remove(ribbon, 1)
+      local drop = math.max(RIBBON_RETRACT, math.ceil(#ribbon / RIBBON_ABSORB_TICKS))
+      if drop >= #ribbon then
+        for k = #ribbon, 1, -1 do ribbon[k] = nil end
+      else
+        local kept = 0
+        for k = drop + 1, #ribbon do
+          kept = kept + 1
+          ribbon[kept] = ribbon[k]
+        end
+        for k = #ribbon, kept + 1, -1 do ribbon[k] = nil end
       end
     end
     ribbonHot = false
@@ -1167,6 +1258,8 @@ return function(mod)
   -- nothing.
   local hudCalls, ticks = 0, 0
 
+  local g1DrawBandFn, g1CamFn
+
   local function overlay(game, vp)
     if not (love and love.graphics and love.graphics.rectangle) then return end
     if type(vp) ~= "table" or not (vp.width and vp.height) then
@@ -1177,6 +1270,7 @@ return function(mod)
       return once("anchor", "RUN FX: waiting for the first step to take an anchor")
     end
 
+    if GENERATION ~= 1 then return end
     -- the ribbon counts too: with RAINBOW there are no particles at all,
     -- and standing down on an empty particle list drew nothing
     if #particles == 0 and #ribbon == 0 then return end
@@ -1222,160 +1316,418 @@ return function(mod)
     -- there. Gold binds no such shader, which is why it worked there and
     -- only there. An effect that is invisible on one generation and fine on
     -- the other is almost always this.
-    -- ------- the ribbon, drawn under everything else
-    --
-    -- Six stripes across the direction of travel,
-    -- laid at every recorded point. The segment is a little longer than
-    -- the distance covered in a tick so consecutive points OVERLAP -- a
-    -- band with gaps in it is a dashed line, not a rainbow.
-    if #ribbon > 0 then
-      local frames = freeFrames or ourFrames or 8
-      local step = 16 / frames
-      local seg = step + 2
-      local band = #RAINBOW_BAND * RIBBON_STRIPE
-      local bx1, by1 = player.px, player.py + SPRITE_TOP
-      local bx2, by2 = player.px + SPRITE_W, player.py + SPRITE_BOT
-      local function ribbonPut(x, y, w, h)
-        if not (x < bx2 and x + w > bx1 and y < by2 and y + h > by1) then
-          put(x, y, w, h)
-        end
-      end
-      for i = 1, #ribbon do
-        local r = ribbon[i]
-        -- Solid, except for a short taper at the far end: a rainbow that
-        -- is translucent along its whole length reads as a smear, and one
-        -- that stops dead reads as a cut ribbon.
-        local fade = math.min(i, 8) / 8
-        local alpha = fade
-        for k = 1, #RAINBOW_BAND do
-          local c = RAINBOW_BAND[k]
-          local off = -band / 2 + (k - 1) * RIBBON_STRIPE
-          local rx, ry, rw, rh
-          if r.dx ~= 0 then
-            rx, ry, rw, rh = r.x - seg / 2, r.y + off, seg, RIBBON_STRIPE
-          else
-            rx, ry, rw, rh = r.x + off, r.y - seg / 2, RIBBON_STRIPE, seg
-          end
-          -- UNDER the character, as far as a hud overlay can be. This
-          -- composites over the finished frame, so anything drawn where
-          -- the player is would be drawn ON him -- and a band this wide
-          -- would bury him. Skipping the stripes his 16x16 box covers
-          -- leaves him standing clear with the ribbon coming out from
-          -- behind, which is what being underneath looks like.
-          if not (rx < bx2 and rx + rw > bx1
-                  and ry < by2 and ry + rh > by1) then
-            love.graphics.setColor(c[1], c[2], c[3], alpha)
-            if r.dx ~= 0 then
-              ribbonPut(rx, ry + 1, rw, rh - 2)
-            else
-              ribbonPut(rx + 1, ry, rw - 2, rh)
-            end
-            love.graphics.setColor(c[1] + (1 - c[1]) * 0.28,
-              c[2] + (1 - c[2]) * 0.28, c[3] + (1 - c[3]) * 0.28, alpha)
-            ribbonPut(rx, ry, r.dx ~= 0 and rw or 1, r.dx ~= 0 and 1 or rh)
-            love.graphics.setColor(c[1] * 0.82, c[2] * 0.82, c[3] * 0.82, alpha)
-            if r.dx ~= 0 then
-              ribbonPut(rx, ry + rh - 1, rw, 1)
-            else
-              ribbonPut(rx + rw - 1, ry, 1, rh)
-            end
-          end
-        end
-      end
-      -- World-anchored glints stay put when old points retract or hit the cap.
-      for i = 1, #ribbon do
-        local r = ribbon[i]
-        local along = r.dx ~= 0 and r.x or r.y
-        if along % 24 < step then
-          local cross = r.dx ~= 0 and r.y or r.x
-          local seed = math.floor(along / 24) * 7 + math.floor(cross / 8) * 3
-          local phase = (math.floor(ticks / 5) + seed) % 8
-          if phase < 4 then
-            local offset = (seed % 5 - 2) * 4
-            local axis = math.floor(along / 24) * 24 + step / 2
-            local x = r.dx ~= 0 and axis or r.x + offset
-            local y = r.dx ~= 0 and r.y + offset or axis
-            love.graphics.setColor(1, 1, 0.94, math.min(i, 8) / 8)
-            ribbonPut(x, y, 1, 1)
-            if phase == 1 or phase == 2 then
-              ribbonPut(x - 2, y, 2, 1)
-              ribbonPut(x + 1, y, 2, 1)
-              ribbonPut(x, y - 2, 1, 2)
-              ribbonPut(x, y + 1, 1, 2)
-            end
-          end
-        end
-      end
-    end
-
-    local drew = 0
-
-    -- The cut is not drawn here any more, and that is the point: it is a
-    -- real block swap in the map, so the engine draws it along with every
-    -- other tile. Nothing below is load-bearing -- switch the whole overlay
-    -- off and BURN GRASS still cuts, SAFE GRASS still works, and the puff
-    -- behind a running player is still there, because all three are the
-    -- engine's own drawing rather than ours.
-
-    -- Draw compiled palette runs on the existing world-pixel projection.
-    local function sprite(kind, size, phase, x, y, core, body, rim, alpha)
-      local frame = FRAMES[kind][size][phase]
-      local left = x - frame.width / 2
-      local top = kind == "bolt" and y - frame.height + 1 or y - frame.height / 2
-      local previous
-      for _, run in ipairs(frame.runs) do
-        if run.ink ~= previous then
-          local shade = run.ink == 3 and core or (run.ink == 2 and body or rim)
-          love.graphics.setColor(shade[1], shade[2], shade[3], alpha)
-          previous = run.ink
-        end
-        put(left + run.x, top + run.y, run.w, 1)
-      end
-    end
-
-    -- Nothing of ours draws inside the player's own 16x16 sprite box.
-    -- `render.hud` composites over the finished frame, so a mark inside that
-    -- box is a mark ON the character, not behind him. Shedding the trail
-    -- BEHIND him (see the BEHIND constant) keeps it clear on its own in
-    -- three directions out of four; this is the backstop for the fourth,
-    -- walking DOWN, where "behind" is "over his head", and for anything that
-    -- drifts back in afterwards.
-    local function onSprite(p)
-      local r = REACH[p.kind] or REACH.dust
-      -- Grown by the particle's own reach, and asymmetrically: a mark ABOVE
-      -- the box can still put pixels in it by reaching DOWN, and one below
-      -- by reaching up, so each edge is pushed out by the reach that crosses
-      -- it rather than by one number for all four.
-      return p.x >= player.px - r.x
-         and p.x <= player.px + SPRITE_W + r.x
-         and p.y >= player.py + SPRITE_TOP - r.down
-         and p.y <= player.py + SPRITE_BOT + r.up
-    end
-
-    for i = 1, #particles do
-      local p = particles[i]
-      local core, body, rim = window(p.kind, p)
-      local size = sizeOf(p.kind, p)
-      -- Fades the whole way out rather than snapping off at the end of the
-      -- trail, but never down to nothing you can see: the far end is a
-      -- ghost, not an absence.
-      local alpha = 0.30 + 0.70 * (p.life / p.max)
-      local age = p.max - p.life
-
-      if not onSprite(p) then
-        local phase = 1 + ((math.floor(age / 3) + p.seed) % 3)
-        if p.kind ~= "bolt" or p.life % 2 == 1 then
-          local artSize = p.kind == "fire" and math.min(8, size + 1) or size
-          sprite(p.kind, artSize, phase, p.x, p.y, core, body, rim, alpha)
-          drew = drew + 1
-        end
+    if g1DrawBandFn and g1CamFn then
+      local cam = g1CamFn()
+      if cam then
+        g1DrawBandFn(math.floor(ox + (cam[1] - player.px) * sx + 0.5),
+          math.floor(oy + (cam[2] - player.py) * sy + 0.5), sx, sy)
       end
     end
 
     love.graphics.pop()
-    if drew > 0 then
-      once("drawing", "RUN FX: drawing (%d marks this frame, scale %g)", drew, sp)
+  end
+
+  -- ------- the trail and the shoes on Gen 3
+  --
+  -- Every sprite here is art at GBA resolution, one texel to one pixel of the
+  -- 240x160 frame, drawn at the frame's own scale from a whole-pixel position.
+  -- So it sits on the same grid as the game instead of over it. The camera is
+  -- `FieldView.draw`: camX = floor(px + 8 - 120) plus any scripted pan, no clamp.
+  local G3_CELL = { dust = 16, fire = 16, bolt = 16, sparkle = 11 }
+  local G3_FILE = { dust = "dust", fire = "flame", bolt = "bolt", sparkle = "sparkle" }
+  local SHOE_MODEL = { sneaker = true, boot = true, winged = true, skate = true,
+    sandal = true, clown = true, rocket = true }
+  local SHOE_TINT = {
+    red = { 1, 0.28, 0.25 }, orange = { 1, 0.58, 0.18 }, yellow = { 1, 0.9, 0.25 },
+    green = { 0.35, 0.9, 0.4 }, blue = { 0.35, 0.55, 1 }, purple = { 0.72, 0.42, 1 },
+    pink = { 1, 0.55, 0.8 }, white = { 1, 1, 1 }, black = { 0.42, 0.42, 0.48 },
+  }
+  -- `package.loaded` in a mod's sandbox is not the engine's, so this goes through
+  -- require: nil rather than a throw, called only once the field is up.
+  local function engine(name)
+    local ok, m = pcall(require, name)
+    return ok and m or nil
+  end
+
+  local g3Images, g3Quads = {}, {}
+  local function g3Image(name)
+    if g3Images[name] == nil then
+      local ok, img = pcall(function() return mod.assets:image("assets/gen3/" .. name .. ".png") end)
+      g3Images[name] = ok and img or false
+      if ok then
+        img:setFilter("nearest", "nearest")
+        if name == "rainbow" then img:setWrap("repeat", "clamp") end
+      else
+        once("art" .. name, "RUN FX: cannot load %s: %s", name, tostring(img))
+      end
     end
+    return g3Images[name] or nil
+  end
+
+  local function g3Quad(img, x, y, w, h)
+    local key = tostring(img) .. ":" .. x .. "," .. y .. "," .. w .. "," .. h
+    local q = g3Quads[key]
+    if not q then
+      q = love.graphics.newQuad(x, y, w, h, img:getDimensions())
+      g3Quads[key] = q
+    end
+    return q
+  end
+
+  local function g3Option(key, fallback)
+    local ok, value = pcall(function() return mod.options:get(key) end)
+    return ok and value or fallback
+  end
+
+  -- The frame for this moment of a mark's life: dust plays through once and
+  -- fades, a flame flickers and then dies on its last frame, a bolt jumps.
+  local function g3Frame(p)
+    local age = 1 - p.life / p.max
+    if p.kind == "dust" then
+      local seq = { 2, 1, 0, 3 }
+      return seq[math.min(4, math.floor(age * 4) + 1)]
+    end
+    if age > 0.75 then return 3 end
+    return (math.floor((p.max - p.life) / 3) + p.seed) % 3
+  end
+
+  -- ------- the shoes
+  --
+  -- A shoe is not drawn near the feet, it is drawn ON them: each sheet holds, for
+  -- every frame of the player's own 18-frame strip, the shoes for exactly that
+  -- pose. So the frame has to be the one the engine just chose, and the moment
+  -- has to be right after it drew the player, inside the world pass: tall grass,
+  -- bridges and whatever else is drawn afterwards then cover the shoes as they
+  -- cover the feet. No hook offers that, hence the wrap on OwSprites.draw, the
+  -- third rung. If that module changes, the shoes go missing and nothing else.
+  -- Other sheets (surf, bike) are different gids, so they never get any.
+  local function drawWornShoes(Ow, gid, px, py, camX, camY, facing, walkPhase, stepFlip, opts)
+    local model = g3Option("shoe_model", "off")
+    if not (SHOES_HERE and SHOE_MODEL[model]) then return end
+    local avatars = Ow.avatars()
+    local who
+    if gid == Ow.avatarGraphicsId("NORMAL", false, avatars) then who = "male"
+    elseif gid == Ow.avatarGraphicsId("NORMAL", true, avatars) then who = "female" end
+    if not who then return end
+    local spr = Ow.getDraw(gid)
+    local img = spr and g3Image("shoes_" .. who .. "_" .. model)
+    if not (img and spr.frameCount == 18) then return end
+    local frame, flip = Ow.pose(spr, facing, walkPhase, stepFlip, opts)
+    if frame > 17 then return end
+    local tint = SHOE_TINT[g3Option("shoe_color", "red")] or SHOE_TINT.white
+    love.graphics.setColor(tint[1], tint[2], tint[3], opts and opts.alpha or 1)
+    local x = px - camX + (16 - spr.width) / 2
+    local y = py - camY + 16 - spr.height + (spr.drawOffY or 0)
+    local quad = g3Quad(img, 0, frame * 32, 16, 32)
+    if flip then
+      love.graphics.draw(img, quad, x + spr.width, y, 0, -1, 1)
+    else
+      love.graphics.draw(img, quad, x, y)
+    end
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+
+  -- ------- the rainbow, under the character
+  --
+  -- A hud overlay composites over the finished frame, so it can only ever
+  -- pretend to be behind anybody: it used to skip whatever stripes his box
+  -- covered, which left a notch around him and a band that ran over NPCs. Being
+  -- in the background means being drawn BEFORE the sprites, in the world pass,
+  -- and no hook stands there. Each generation has one call that does, and each
+  -- gets one wrap (third rung, declared): the first sprite of a frame on Gen 1,
+  -- `World:drawPeople` on Gold, the player's own sheet on Gen 3. If a wrap's
+  -- target changes, the rainbow goes missing and nothing else does.
+  local ribbonDrawnAt = -1
+
+  local function ribbonWidth(i)
+    -- Measured so the head is always full width: a short run tapers over all of
+    -- itself, a long one only over its last stretch.
+    local over = math.min(RIBBON_TAPER, math.max(1, #ribbon))
+    return math.max(0.125, math.ceil(math.min(1, i / over) * 8) / 8)
+  end
+
+  -- Game Boy rules on Gen 1 and Gold: flat colour, whole pixels, no fades and no
+  -- glints. Anything finer reads as a different console on top of the map, and
+  -- the tail narrows by whole pixels per stripe rather than by a smooth taper.
+  local function drawRibbonStripes(camX, camY, s)
+    local frames = freeFrames or ourFrames or 8
+    local seg = 16 / frames + 2
+    local function put(x, y, w, h)
+      love.graphics.rectangle("fill",
+        math.floor(x - camX) * s, math.floor(y - camY) * s,
+        math.max(1, math.ceil(w)) * s, math.max(1, math.ceil(h)) * s)
+    end
+    for i = 1, #ribbon do
+      local r = ribbon[i]
+      local stripe = math.max(1, math.ceil(RIBBON_STRIPE * ribbonWidth(i)))
+      local band = #RAINBOW_BAND * stripe
+      for k = 1, #RAINBOW_BAND do
+        local c = RAINBOW_BAND[k]
+        local off = -band / 2 + (k - 1) * stripe
+        love.graphics.setColor(c[1], c[2], c[3], 1)
+        if r.dx ~= 0 then
+          put(r.x - seg / 2, r.y + off, seg, stripe)
+        else
+          put(r.x + off, r.y - seg / 2, stripe, seg)
+        end
+      end
+    end
+  end
+
+  -- Dust, flames and bolts on Gen 1 and Gold: two flat shades, no transparency.
+  local function drawMarks(camX, camY, s)
+    for i = 1, #particles do
+      local p = particles[i]
+      local _, body, rim = window(p.kind, p)
+      local size = sizeOf(p.kind, p)
+      local phase = 1 + ((math.floor((p.max - p.life) / 3) + p.seed) % 3)
+      if p.kind ~= "bolt" or p.life % 2 == 1 then
+        local artSize = p.kind == "fire" and math.min(8, size + 1) or size
+        local frame = FRAMES[p.kind][artSize][phase]
+        local left = math.floor(p.x - frame.width / 2)
+        local top = math.floor(p.kind == "bolt" and p.y - frame.height + 1 or p.y - frame.height / 2)
+        local previous
+        for _, run in ipairs(frame.runs) do
+          local ink = run.ink == 1 and 1 or 2
+          if ink ~= previous then
+            local shade = ink == 1 and rim or body
+            love.graphics.setColor(shade[1], shade[2], shade[3], 1)
+            previous = ink
+          end
+          love.graphics.rectangle("fill", (left + run.x - math.floor(camX)) * s,
+            (top + run.y - math.floor(camY)) * s, run.w * s, s)
+        end
+      end
+    end
+  end
+
+  local function drawTrailGen3(camX, camY)
+    local img = #ribbon > 0 and g3Image("rainbow")
+    if img then
+      local step = 16 / (freeFrames or ourFrames or 8)
+      local seg = math.ceil(step) + 1
+      for i = 1, #ribbon do
+        local r = ribbon[i]
+        local along = math.floor(r.dx ~= 0 and r.x or r.y)
+        local quad = g3Quad(img, along % 16, 0, seg, 24)
+        local f = ribbonWidth(i)
+        -- 36 pixels, taller than the character, stepping up and down every eight
+        -- pixels of ground: the square wave is what makes it read as that rainbow.
+        local tall = 1.5 * f
+        local wave = math.floor(along / 8) % 2 == 0 and -1 or 1
+        love.graphics.setColor(1, 1, 1, math.min(i, 8) / 8)
+        if r.dx ~= 0 then
+          love.graphics.draw(img, quad, math.floor(r.x - seg / 2 - camX),
+            math.floor(r.y - 12 * tall + wave - camY), 0, 1, tall)
+        else
+          love.graphics.draw(img, quad, math.floor(r.x + 12 * tall + wave - camX),
+            math.floor(r.y - seg / 2 - camY), math.pi / 2, 1, tall)
+        end
+      end
+      local star = g3Image("sparkle")
+      if star then
+        love.graphics.setColor(1, 1, 1, 1)
+        for i = 1, #ribbon do
+          local r = ribbon[i]
+          local along = r.dx ~= 0 and r.x or r.y
+          if along % 32 < step and ribbonWidth(i) == 1 then
+            local seed = math.floor(along / 32) * 7
+            local frame = (math.floor(ticks / 6) + seed) % 4
+            local cross = ((seed % 3) - 1) * 10
+            local x = (r.dx ~= 0 and r.x or r.x + cross) - 5
+            local y = (r.dx ~= 0 and r.y + cross or r.y) - 5
+            love.graphics.draw(star, g3Quad(star, frame % 2 * 11, math.floor(frame / 2) * 11, 11, 11),
+              math.floor(x - camX), math.floor(y - camY))
+          end
+        end
+      end
+    end
+    love.graphics.setColor(1, 1, 1, 1)
+    for i = 1, #particles do
+      local p = particles[i]
+      local mark = g3Image(G3_FILE[p.kind] or "dust")
+      if mark then
+        local cell = G3_CELL[p.kind] or 16
+        local half = math.floor(cell / 2)
+        local frame = g3Frame(p)
+        love.graphics.draw(mark, g3Quad(mark, frame % 2 * cell, math.floor(frame / 2) * cell, cell, cell),
+          math.floor(p.x - half - camX), math.floor(p.y - half - camY))
+      end
+    end
+  end
+
+  -- Once a frame, under the sprites, with the draw state made safe and put back.
+  local function drawRibbon(camX, camY, s)
+    if (#ribbon == 0 and #particles == 0) or ribbonDrawnAt == hudCalls then return end
+    ribbonDrawnAt = hudCalls
+    love.graphics.push("all")
+    local ok, err = pcall(function()
+      if GEN3 then
+        drawTrailGen3(camX, camY)
+      else
+        drawRibbonStripes(camX, camY, s or 1)
+        drawMarks(camX, camY, s or 1)
+      end
+    end)
+    love.graphics.pop()
+    if not ok then once("ribbonerr", "RUN FX: rainbow: %s", tostring(err)) end
+    once("ribbondraw", "RUN FX: rainbow drawing under the sprites")
+  end
+
+  local function attachGen3(Ow)
+    if Ow.runningShoesWrap and Ow.draw == Ow.runningShoesWrap then Ow.draw = Ow.runningShoesInner end
+    local inner = Ow.draw
+    local wrap = function(gid, px, py, camX, camY, facing, walkPhase, stepFlip, opts)
+      if (#ribbon > 0 or #particles > 0) and live and Ow.playerGraphicsId
+         and gid == Ow.playerGraphicsId(live) then
+        drawRibbon(camX, camY, 1)
+      end
+      local drew = inner(gid, px, py, camX, camY, facing, walkPhase, stepFlip, opts)
+      if drew then
+        local ok, err = pcall(drawWornShoes, Ow, gid, px, py, camX, camY, facing, walkPhase, stepFlip, opts)
+        if not ok then once("shoeerr", "SHOE MODEL: %s", tostring(err)) end
+      end
+      return drew
+    end
+    Ow.draw = wrap
+    Ow.runningShoesWrap, Ow.runningShoesInner = wrap, inner
+  end
+
+  -- ------- Gen 1 is the exception
+  --
+  -- Its zone pass recolours the whole world canvas to four shades after the
+  -- sprites are down, so a band drawn there comes out grey, and the true-colour
+  -- opt-out only exists in one palette mode and bares the map around it. So on
+  -- Gen 1 the band is painted over the finished frame after all, in real colour,
+  -- and each sprite's exact silhouette is erased from it first. To do that, every
+  -- sprite blit of the frame is also copied to a mask canvas, by listening to
+  -- love.graphics.draw for the length of one SpriteRenderer.draw call.
+  local g1Mask, g1Band, g1Cam, g1MaskFrame
+  local g1MaskShader, g1EraseShader
+
+  local function g1MaskReady(w, h)
+    if not (g1MaskShader and g1EraseShader) then
+      g1MaskShader = love.graphics.newShader([[
+        vec4 effect(vec4 c, Image t, vec2 uv, vec2 s) {
+          if (Texel(t, uv).a < 0.5) discard;
+          return vec4(1.0);
+        }]])
+      g1EraseShader = love.graphics.newShader([[
+        vec4 effect(vec4 c, Image t, vec2 uv, vec2 s) {
+          if (Texel(t, uv).a < 0.5) discard;
+          return vec4(0.0);
+        }]])
+    end
+    if not g1Mask or g1Mask:getWidth() ~= w or g1Mask:getHeight() ~= h then
+      g1Mask = love.graphics.newCanvas(w, h, { dpiscale = 1 })
+      g1Band = love.graphics.newCanvas(w, h, { dpiscale = 1 })
+      g1Mask:setFilter("nearest", "nearest")
+      g1Band:setFilter("nearest", "nearest")
+    end
+  end
+
+  -- Over the finished frame: `place` is where the world canvas's origin lands.
+  local function g1DrawBand(placeX, placeY, sx, sy)
+    if not (g1Band and g1Cam and g1MaskFrame == hudCalls) then return end
+    love.graphics.push("all")
+    love.graphics.setCanvas(g1Band)
+    love.graphics.origin()
+    love.graphics.setScissor()
+    love.graphics.clear(0, 0, 0, 0)
+    love.graphics.setBlendMode("alpha")
+    drawRibbonStripes(g1Cam[1], g1Cam[2], 1)
+    drawMarks(g1Cam[1], g1Cam[2], 1)
+    love.graphics.setBlendMode("replace", "premultiplied")
+    love.graphics.setShader(g1EraseShader)
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(g1Mask, 0, 0)
+    love.graphics.pop()
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(g1Band, placeX, placeY, 0, sx, sy)
+  end
+
+  local function attachGen1(Sprites)
+    if Sprites.runningShoesWrap and Sprites.draw == Sprites.runningShoesWrap then
+      Sprites.draw = Sprites.runningShoesInner
+    end
+    local inner = Sprites.draw
+    local wrap = function(self, px, py, camX, camY, ...)
+      if not ((#ribbon > 0 or #particles > 0) and live and topIsOverworld(live) and camX) then
+        return inner(self, px, py, camX, camY, ...)
+      end
+      local target = love.graphics.getCanvas()
+      if not target then return inner(self, px, py, camX, camY, ...) end
+      g1MaskReady(target:getDimensions())
+      if g1MaskFrame ~= hudCalls then
+        g1MaskFrame = hudCalls
+        g1Cam = { camX, camY }
+        love.graphics.push("all")
+        love.graphics.setCanvas(g1Mask)
+        love.graphics.origin()
+        love.graphics.setScissor()
+        love.graphics.clear(0, 0, 0, 0)
+        love.graphics.pop()
+      end
+      local realDraw = love.graphics.draw
+      local blits = {}
+      love.graphics.draw = function(...)
+        blits[#blits + 1] = { ... }
+        return realDraw(...)
+      end
+      local a, b, c = inner(self, px, py, camX, camY, ...)
+      love.graphics.draw = realDraw
+      love.graphics.push("all")
+      love.graphics.setCanvas(g1Mask)
+      love.graphics.setShader(g1MaskShader)
+      love.graphics.setBlendMode("replace", "premultiplied")
+      love.graphics.setColor(1, 1, 1, 1)
+      for _, call in ipairs(blits) do realDraw(unpack(call)) end
+      love.graphics.pop()
+      return a, b, c
+    end
+    Sprites.draw = wrap
+    Sprites.runningShoesWrap, Sprites.runningShoesInner = wrap, inner
+  end
+
+  local function attachGen2(World)
+    if World.runningShoesWrap and World.drawPeople == World.runningShoesWrap then
+      World.drawPeople = World.runningShoesInner
+    end
+    local inner = World.drawPeople
+    local wrap = function(self, s, billboard)
+      if (#ribbon > 0 or #particles > 0) and not billboard and self.camera then
+        drawRibbon(self.camera.x, self.camera.y, s)
+      end
+      return inner(self, s, billboard)
+    end
+    World.drawPeople = wrap
+    World.runningShoesWrap, World.runningShoesInner = wrap, inner
+  end
+
+  g1DrawBandFn = g1DrawBand
+  g1CamFn = function() return g1Cam end
+
+  -- The one seam the headless suite reads the trail through.
+  mod.exports.drawTrail = function(camX, camY, s)
+    drawRibbonStripes(camX, camY, s)
+    drawMarks(camX, camY, s)
+  end
+
+  local function attachWorldPass()
+    if not (love and love.graphics) then return end
+    if GEN3 then
+      local Ow = engine("src.core.game3.ow_sprites")
+      if Ow and Ow.draw and Ow.pose and Ow.getDraw and Ow.avatars and Ow.avatarGraphicsId then
+        return attachGen3(Ow)
+      end
+    elseif GENERATION == 2 then
+      local World = engine("src.world.gen2.World")
+      if World and World.drawPeople then return attachGen2(World) end
+    else
+      local Sprites = engine("src.render.SpriteRenderer")
+      if Sprites and Sprites.draw then return attachGen1(Sprites) end
+    end
+    once("noseam", "RUN FX: no world-pass seam on this engine build; no rainbow or shoes")
   end
 
   -- ------- running under a camera that took the walk away
@@ -1533,8 +1885,91 @@ return function(mod)
 
   -- Nothing shed on the last map belongs on this one, and nothing shed in
   -- the overworld belongs over a battle's opening frames.
-  mod.events:on("map.exited", clearTrail)
-  mod.events:on("battle.started", clearTrail)
+  mod.events:on("map.exited", function()
+    clearTrail()
+    lastCell, pendingTrail = nil, nil
+  end)
+
+  -- ------- TRAIL STATUS
+  --
+  -- A wild Pokemon you run into starts the battle hit by what you were trailing:
+  -- flames burn, bolts paralyse, the rainbow confuses. Dust raises a sandstorm on
+  -- Gen 3; Gen 1 has no weather and on Gold it stays what Gen 1 does, dust in the
+  -- eyes, one stage of accuracy. Every generation goes through its own battle's
+  -- own calls, so an immune Pokemon is immune here too. The roll is untouched.
+  -- battle.started fires before the battle is on screen on Gen 3, and a message
+  -- there sits on a black frame. So the effect lands now and is told at turn one.
+  local trailSay
+  if GEN3 then
+    mod.events:on("battle.turn_started", function()
+      if not trailSay then return end
+      local text = trailSay
+      trailSay = nil
+      pcall(function() require("src.core.game3.battle")._adapter:say(text) end)
+    end)
+  end
+
+  local function trailGen3(kind, ev)
+    local Battle = require("src.core.game3.battle")
+    local ad, st = Battle._adapter, ev.battle or Battle.getState()
+    local foe = st and st.enemy
+    if not (ad and foe) then return end
+    if kind == "dust" then
+      ad:setWeather("SAND", 5)
+      trailSay = "Your dust whipped up a sandstorm!"
+    elseif kind == "fire" then
+      if ad:applyStatus(foe, "BRN") then trailSay = "Your flames burned the wild foe!" end
+    elseif kind == "bolt" then
+      if ad:applyStatus(foe, "PAR") then trailSay = "Your sparks paralyzed the wild foe!" end
+    elseif kind == "rainbow" then
+      if ad:applyConfusion(foe) then trailSay = "Your rainbow confused the wild foe!" end
+    end
+  end
+
+  local function trailGen2(kind, ev)
+    local battle = ev.battle and ev.battle.battle or ev.battle
+    local foe = battle and battle.enemy
+    if not (foe and battle.applyStatus) then return false end
+    if kind == "dust" then battle:changeStage(foe, "accuracy", -1)
+    elseif kind == "fire" then battle:applyStatus(foe, "burn")
+    elseif kind == "bolt" then battle:applyStatus(foe, "paralyze")
+    elseif kind == "rainbow" then battle:applyConfusion(foe) end
+    return true
+  end
+
+  local function trailGen1(kind, ev)
+    local battle = ev.battle
+    local foe = battle and battle.enemy
+    if not (foe and foe.mon) then return end
+    local function say(text) if battle.sayNext then battle:sayNext(text) end end
+    if kind == "dust" then
+      foe.stages = foe.stages or {}
+      foe.stages.accuracy = math.max(-6, (foe.stages.accuracy or 0) - 1)
+      say("Your dust got in\nthe foe's eyes!")
+    elseif kind == "rainbow" then
+      if not foe.confusedTurns then
+        foe.confusedTurns = battle.rng and battle.rng(2, 5) or 3
+        say("Your rainbow\nconfused the foe!")
+      end
+    elseif not foe.mon.status then
+      local msgs = require("src.battle.StatusRegistry").inflict(battle, foe,
+        kind == "fire" and "BRN" or "PAR", {})
+      for _, text in ipairs(msgs or {}) do say(text) end
+    end
+  end
+
+  mod.events:on("battle.started", function(ev)
+    clearTrail()
+    local kind = pendingTrail
+    pendingTrail = nil
+    if not (kind and type(ev) == "table" and ev.kind == "wild") then return end
+    local ok, err = pcall(function()
+      if GEN3 then trailGen3(kind, ev)
+      elseif GENERATION == 2 then trailGen2(kind, ev)
+      else trailGen1(kind, ev) end
+    end)
+    if not ok then mod.log:warn("TRAIL STATUS: %s", tostring(err)) end
+  end)
 
   -- ------- the step that lands
   --
@@ -1549,9 +1984,18 @@ return function(mod)
     local game = live
     if not game then return end
 
+    pendingTrail = nil
     if cutOn() and running then
-      cutGrassAt(game, ev.x, ev.y)
+      -- The cut lands before the encounter check, so a cut cell can never start a
+      -- battle. With TRAIL STATUS on the meeting is the point: the grass goes when
+      -- you step off it instead, and the path behind you is still bare.
+      if enabled("trail_status") then
+        if lastCell then cutGrassAt(game, lastCell.x, lastCell.y) end
+      else
+        cutGrassAt(game, ev.x, ev.y)
+      end
     end
+    lastCell = { x = ev.x, y = ev.y }
 
     -- The puff behind a running player is the ENGINE's dust animation --
     -- the same one Cut leaves on grass -- placed on the cell just vacated.
@@ -1572,17 +2016,6 @@ return function(mod)
     -- is deliberate, not a gap this file should paper over: see "what
     -- changes on Gold" near the top for why there is no puff to borrow
     -- there, and why the coloured particles below do not need one.
-    local kind = fxKind()
-    local ow = game.overworld
-    if kind ~= "off" and running and ow and ow.startDustAnim
-       and not ow.dustAnim and anchor and anchor.facing then
-      local d = DIRV[anchor.facing]
-      if d then
-        ow:startDustAnim(ev.x - d[1], ev.y - d[2])
-        -- a trail is a flicker, not the eight beats a boulder gets
-        if ow.dustAnim then ow.dustAnim.frames = PUFF_FRAMES end
-      end
-    end
   end)
 
   -- Entering a map used to re-cut everything this mod had ever run
@@ -1598,9 +2031,160 @@ return function(mod)
   -- on the same fixed clock as the step it belongs to, so it neither
   -- speeds up on a 144Hz display nor keeps moving while the game is paused
   -- behind a menu.
+  -- ------- WHAT'S NEW
+  --
+  -- As in the box and dex mods: once per NEWS_VERSION per save, so after an update
+  -- or on a first install, never again until a page changes. There it opens with
+  -- the screen it belongs to; this mod has no screen, so it opens on the first run.
+  -- Bump NEWS_VERSION when a page changes, not on every release.
+  local NEWS_VERSION = "1.11.0"
+  local NEWS_WIDE = {
+    { title = "NOW ON GEN 3", lines = {
+      "Running Shoes runs on this game now.",
+      "Hold B: RUN SPEED counts from walking,",
+      "so x2 is the cart's own run and x3 and",
+      "x4 go past it. Before you have shoes,",
+      "B runs anyway.",
+      "",
+      "Every option is in the mod's options.",
+    } },
+    { title = "TRAIL STATUS", lines = {
+      "New in the mod's options, and off until",
+      "you turn it on. Meet a wild Pokemon at a",
+      "run and it starts hit by your trail:",
+      "",
+      "FLAMES burn   BOLTS paralyze",
+      "RAINBOW confuses",
+      "DUST whips up a sandstorm",
+    } },
+    { title = "A TAIL, NOT A CLOUD", lines = {
+      "Every trail now comes out of you and",
+      "runs under your sprite, like a meteor's.",
+      "The rainbow is drawn back in when you",
+      "stop running.",
+      "",
+      "BURN GRASS with TRAIL STATUS cuts the",
+      "cell as you leave it, so you can still",
+      "meet something on it.",
+    } },
+    { title = "SHOES", lines = {
+      "On Emerald, playing as the boy:",
+      "SHOE MODEL and SHOE COLOUR put seven",
+      "pairs in nine colours on your own feet.",
+      "They are off until you pick a pair.",
+    } },
+  }
+  local NEWS_SMALL = {
+    { title = "NEW GAMES", lines = {
+      "Running Shoes now", "also runs on", "Gen 3: Ruby,", "Sapphire, Emerald,", "FireRed and", "LeafGreen.",
+    } },
+    { title = "TRAIL STATUS", lines = {
+      "New option, off", "until you turn it", "on. Meet a wild",
+      "Pokemon at a run", "and it starts hit", "by your trail:", "",
+      "FLAMES burn", "BOLTS paralyze", "RAINBOW confuses", "DUST: accuracy",
+    } },
+    { title = "A TAIL", lines = {
+      "Trails now come", "out of you and", "run under your", "sprite, like a",
+      "meteor's. The", "rainbow is drawn", "back in when you", "stop.",
+    } },
+  }
+  local NEWS = GEN3 and NEWS_WIDE or NEWS_SMALL
+  local newsPage, newsCanvas
+  local newsDeaf = 0
+  local newsChecked = false
+
+  local function newsSeen()
+    local ok, seen = pcall(function() return mod.save:get("newsSeen") end)
+    return ok and seen == NEWS_VERSION
+  end
+
+  local function closeNews()
+    newsPage = nil
+    pcall(function() mod.save:set("newsSeen", NEWS_VERSION) end)
+  end
+
+  -- The player stands still while it is open: its keys are read here and go no
+  -- further, and a direction or B held when it opened has to be pressed again.
+  local function newsInput(game)
+    local input = game and game.input
+    if not input then return end
+    -- It opens under a player who is running, so B is already in play: half a
+    -- second of deafness, or a mashed B would close a page nobody has seen.
+    newsDeaf = newsDeaf - 1
+    for _, btn in ipairs(newsDeaf > 0 and {} or input.pressQueue or {}) do
+      if btn == "b" then closeNews()
+      elseif btn == "a" or btn == "right" then
+        if newsPage and newsPage >= #NEWS then closeNews()
+        elseif newsPage then newsPage = newsPage + 1 end
+      elseif btn == "left" and newsPage and newsPage > 1 then newsPage = newsPage - 1 end
+    end
+    for i = #(input.pressQueue or {}), 1, -1 do input.pressQueue[i] = nil end
+    for _, btn in ipairs({ "a", "b", "start", "select", "up", "down", "left", "right" }) do
+      if input.state then input.state[btn] = false end
+      if input.pressed then input.pressed[btn] = nil end
+    end
+  end
+
+  local function drawNews(vp)
+    local page = newsPage and NEWS[newsPage]
+    if not page or type(vp) ~= "table" then return end
+    local W, H = GEN3 and 240 or 160, GEN3 and 160 or 144
+    if not newsCanvas then
+      newsCanvas = love.graphics.newCanvas(W, H, { dpiscale = 1 })
+      newsCanvas:setFilter("nearest", "nearest")
+    end
+    love.graphics.push("all")
+    love.graphics.setCanvas(newsCanvas)
+    love.graphics.origin()
+    love.graphics.setScissor()
+    love.graphics.setShader()
+    love.graphics.clear(0, 0, 0, 0)
+    love.graphics.setColor(1, 1, 1, 1)
+    if GEN3 then
+      local Window = require("src.ui.game3.window")
+      Window.stdFrame(Window.template(2, 2, 26, 16))
+      Window.printPx(string.format("WHAT'S NEW %s  %d/%d", NEWS_VERSION, newsPage, #NEWS), 24, 20, { small = true })
+      Window.printPx(page.title, 24, 34)
+      for i, line in ipairs(page.lines) do
+        Window.printPx(line, 24, 36 + i * 12, { small = true })
+      end
+      Window.printPx(newsPage < #NEWS and "A: NEXT   B: CLOSE" or "A / B: CLOSE", 24, 130, { small = true })
+    else
+      local Font = require("src.render.Font")
+      love.graphics.rectangle("fill", 0, 0, W, H)
+      love.graphics.setColor(0, 0, 0, 1)
+      love.graphics.rectangle("line", 2.5, 2.5, W - 5, H - 5)
+      Font.draw(page.title, 8, 8)
+      for i, line in ipairs(page.lines) do Font.draw(line, 8, 12 + i * 10) end
+      Font.draw(newsPage < #NEWS and "A:NEXT  B:CLOSE" or "A/B:CLOSE", 8, H - 14)
+    end
+    love.graphics.pop()
+    local vw, vh = tonumber(vp.width) or W, tonumber(vp.height) or H
+    local k = vp.gameWidth and vp.gameWidth / W or math.max(1, math.floor(math.min(vw / W, vh / H)))
+    local x = vp.gameX or math.floor((vw - W * k) / 2)
+    local y = vp.gameY or math.floor((vh - H * k) / 2)
+    love.graphics.push("all")
+    love.graphics.setShader()
+    love.graphics.setScissor()
+    love.graphics.setBlendMode("alpha")
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(newsCanvas, x, y, 0, k, k)
+    love.graphics.pop()
+  end
+
+  local worldAttached = false
   mod.hooks:wrap("input.step", function(next, game, dt)
+    if newsPage then newsInput(game) end
     local out = next(game, dt)
     live = game
+    if not newsChecked and running and anchor and (anchor.moving or freeMoving) then
+      newsChecked = true
+      if not newsSeen() then newsPage, newsDeaf = 1, 30 end
+    end
+    if not worldAttached and (not GEN3 or game.phase == "field") then
+      worldAttached = true
+      attachWorldPass()
+    end
     if tracked and not tracked.moving then restore() end
 
     -- Attached from here rather than at load, because load order is not
@@ -1625,9 +2209,16 @@ return function(mod)
         spawnClock = spawnClock + 1
         if kind == "rainbow" then
           layRibbon(anchor)
+          ribbonLaidAt = ticks
           ribbonHot = true
         else
-          for _ = 1, PER_TICK do emit(kind, anchor) end
+          -- A Gen 3 mark is a whole sprite rather than a speck, so it sheds
+          -- four a cell: dense enough to be one tail, not a row of puffs.
+          if not GEN3 then
+            for _ = 1, PER_TICK do emit(kind, anchor) end
+          elseif spawnClock % math.max(1, math.floor((ourFrames or 8) / 4)) == 0 then
+            emit(kind, anchor)
+          end
         end
         once("spawn", "RUN FX: %s trail spawning", kind)
       else
@@ -1635,6 +2226,18 @@ return function(mod)
       end
     elseif kind == "off" and running and anchor and (anchor.moving or freeMoving) then
       once("fxoff", "RUN FX: the RUN FX row is OFF")
+    end
+    -- However it stopped being a run, the band's near end stays on the runner
+    -- while the far end comes in: it never lets go of him.
+    if #ribbon > 0 and anchor and not ribbonHot then
+      local input = game and game.input
+      local held = input and input.isDown and input:isDown("b")
+      if anchor.moving or freeMoving then
+        layRibbon(anchor)
+      end
+      if held and running and ticks - ribbonLaidAt <= RIBBON_GRACE then
+        ribbonHot = true
+      end
     end
     return out
   end)
@@ -1658,6 +2261,14 @@ return function(mod)
     freeMoving, freeFrames = false, nil
     if ctx.player then anchor = ctx.player end
 
+    -- Gen 3 routes jumps through this hook too, and the cart's own rules say
+    -- where nobody runs. A ledge hop that took half its frames would land wrong.
+    if GEN3 and ctx.player then
+      local p = ctx.player
+      if p.jumping or p.surfHopping or p.dismounting or ctx.underwater then return base end
+      if p.runningDisallowed and p.runningDisallowed(p.cellX, p.cellY) then return base end
+    end
+
     local input = ctx.input
     if not (input and input.isDown and input:isDown("b")) then return base end
     if ctx.onBike and not enabled("bike") then return base end
@@ -1667,11 +2278,19 @@ return function(mod)
     if f <= 1 then return base end
     running = true
 
-    local sped = math.floor(base / f + 0.5)
+    -- RUN SPEED is a multiple of WALKING in every generation. A Gen 3 running
+    -- step already arrives halved, so x2 is the cart's own run, and dividing that
+    -- again would squeeze the whole ladder against the floor.
+    local walking = base
+    if GEN3 and ctx.running and not ctx.onBike and not ctx.surfing then walking = base * 2 end
+    local sped = math.floor(walking / f + 0.5)
     if sped < MIN_FRAMES then sped = MIN_FRAMES end
     -- Never hand back something slower than what we were given: a mod that
     -- already made this step quicker than our own floor should keep it.
-    if sped > base then return base end
+    if sped > base then
+      ourFrames = base
+      return base
+    end
 
     -- remember the pair so the step can be handed back to the engine's own
     -- number once it is over (see "putting the duration back")
@@ -1694,11 +2313,23 @@ return function(mod)
   -- step would have drawn -- only the battle is missing, not the draw
   -- underneath it.
   mod.hooks:wrap("encounter.roll", function(next, encDef, ctx)
-    if type(ctx) ~= "table" or ctx.terrain ~= "grass" then
+    local grassy = type(ctx) == "table" and ctx.terrain == "grass"
+    -- Gen 3 calls grass and cave floors alike "land"; only the cell can tell.
+    if GEN3 and type(ctx) == "table" and ctx.terrain == "land" then
+      local Collision = engine("src.core.game3.collision")
+      local at = ctx.opts or {}
+      local ok, inGrass = pcall(function() return Collision.isGrass(at.x, at.y) end)
+      grassy = ok and inGrass
+    end
+    if not grassy then
       return next(encDef, ctx)
     end
     local rolled = next(encDef, ctx)
     if running and enabled("safe") then return nil end
+    if rolled and running and enabled("trail_status") then
+      local kind = fxKind()
+      if kind ~= "off" then pendingTrail = kind end
+    end
     return rolled
   end)
 
@@ -1708,8 +2339,17 @@ return function(mod)
   -- wrapper is expected to.
   mod.hooks:wrap("render.hud", function(next, game, viewport)
     local out = next(game, viewport)
+    if GENERATION == 1 then overlay(game, viewport) end
+    if newsPage then
+      local ok, err = pcall(drawNews, viewport)
+      if not ok then
+        once("newserr", "WHAT'S NEW: %s", tostring(err))
+        closeNews()
+      end
+    end
+    -- After the draw: the world pass of this same frame stamped its mask with
+    -- this number, and the band above has to find it still current.
     hudCalls = hudCalls + 1
-    overlay(game, viewport)
     return out
   end)
 end

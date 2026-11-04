@@ -6,29 +6,44 @@ Gen 3 handed you running shoes in the first five minutes. Gen 1 made you
 walk to Cerulean, beat a gym, and buy a bicycle voucher off a man in a
 skyscraper. This evens things up slightly.
 
-## New in 1.10.0 — sharper trails, brighter rainbow
+## New in 1.11.0 -- Gen 3, and trails that bite
 
-**DUST**, **FLAMES** and **BOLTS** use original animated pixel art: rolling
-puffs, split flame tongues and forked lightning, with distinct highlights
-and transparent gaps that keep the silhouettes clear.
+**Now on Gen 3**: Ruby, Sapphire, Emerald, FireRed and LeafGreen. RUN SPEED
+counts from walking, so x2 is the game's own run and x3 and x4 go past it. B runs
+even before the game has given you shoes.
 
-**RAINBOW** keeps its six-stripe ribbon, now with shaded stripes and sparse
-sparkles. It traces your run and retracts from the oldest end when you
-stop; long runs retain the most recent 600 path points. All four effects
-work on Gen 1 and Pokémon Gold.
+**TRAIL STATUS** (off by default): a wild Pokemon you run into starts the battle
+hit by your trail.
+
+| RUN FX | What the wild Pokemon starts with |
+| --- | --- |
+| FLAMES | burned |
+| BOLTS | paralyzed |
+| RAINBOW | confused |
+| DUST | a sandstorm on Gen 3; accuracy down one stage on Gen 1 and 2 |
+
+**Every trail is a tail.** It comes out of you with no gap, runs under your
+sprite and narrows like a meteor's. The rainbow is drawn back in when you stop;
+on Gen 3 it is big, with a square wave.
+
+**SHOE MODEL and SHOE COLOUR** (off by default; Emerald, playing as the boy):
+sneakers, boots, winged shoes, skates, sandals, clown shoes and rocket shoes in
+nine colours, on your own feet in every frame. Other players' sprites are not
+done yet.
+
+A WHAT'S NEW window opens on your first run after an update or an install, once
+per save. A reads on, B closes.
 
 ## A run that leaves something behind
 
-Three extras, and **every one of them has an off switch**, on the mod's own
+Extras, and **every one of them has an off switch**, on the mod's own
 options page. Nothing here is permanent and nothing is forced on you.
 
-**A trail off your heels while you run.** Pick **smoke**, **flames** or
-**lightning** — it reaches about three and a half cells back and fades the
-whole way out — or a **rainbow ribbon** that traces the route. Set `RUN FX`
-to `OFF` and the picture is exactly what it was
-before; the trail draws over the finished frame and changes nothing
-underneath it, not a tile, not a flag, and not one roll of the dice that
-decide encounters.
+**A trail off your heels while you run.** Pick **dust**, **flames** or
+**lightning** — about three and a half cells long, narrowing towards the far
+end — or a **rainbow** that traces the route. Set `RUN FX` to `OFF` and the
+picture is exactly what it was before. The trail changes nothing in the world:
+not a tile, not a flag, and not one roll of the dice that decide encounters.
 
 **Grass you can cut by running through it.** `BURN GRASS` cuts the tall
 grass you *run* across, one clod at a time — the size of your character,

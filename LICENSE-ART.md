@@ -26,6 +26,9 @@ its wallpapers or sprites procedurally in Lua, the drawing code is MIT like
 the rest of the code, and the pictures it produces are art under the terms
 above.
 
+The sprites in `assets/gen3` are under the same terms. They contain no data
+taken from a ROM.
+
 ## What it does not cover
 
 Third-party art shipped alongside keeps **its own licence**, which is
