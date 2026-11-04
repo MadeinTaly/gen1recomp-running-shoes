@@ -6,6 +6,8 @@ Gen 3 handed you running shoes in the first five minutes. Gen 1 made you
 walk to Cerulean, beat a gym, and buy a bicycle voucher off a man in a
 skyscraper. This evens things up slightly.
 
+![The four trails: rainbow, dust, flames and bolts](docs/preview.png)
+
 ## New in 1.11.0 -- Gen 3, and trails that bite
 
 **Now on Gen 3**: Ruby, Sapphire, Emerald, FireRed and LeafGreen. RUN SPEED

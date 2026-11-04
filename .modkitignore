@@ -3,3 +3,4 @@
 # archive (CONTRIBUTING-mods.md "What the PR must contain", 2).
 tests/running_shoes_test.lua
 dist/
+docs/
