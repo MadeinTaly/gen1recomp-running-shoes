@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.11.1 -- no support link
+
+- The support link is gone from the mod's details and from the README.
+  Nothing else changes.
+
 ## 1.11.0 -- Gen 3, tails, and trails that bite
 
 **Now on Gen 3.** Ruby, Sapphire, Emerald, FireRed and LeafGreen
