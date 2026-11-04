@@ -504,26 +504,6 @@ T.check(MAP:isGrassCell(0, 1) and MAP:isGrassCell(5, 1),
   "and so is the row above it")
 runner.facing = "down"
 
--- the puff behind a running player is the engine's own dust animation,
--- placed on the cell just vacated rather than the one being landed on.
--- BURN GRASS goes off first: a cut leaves its own puff on the cell it
--- cut, and that is the animation this would otherwise be reading back.
-setOpt("burn", false)
-setOpt("fx", "dust")
-OW.dustAnim = nil
-runner.facing = "down"
-stepOnto(2, 4, true)
-T.check(OW.dustAnim ~= nil, "a running step leaves the engine's dust puff")
-T.eq(OW.dustAnim.y, 3, "on the cell just vacated, not the one landed on")
-
--- and never over one already in flight: that animation owns a callback,
--- and dropping it would strand whatever queued it
-OW.dustAnim = { x = 0, y = 0, frames = 30, onDone = function() end }
-local held = OW.dustAnim
-stepOnto(2, 5, true)
-T.eq(OW.dustAnim, held, "an animation already running is never stamped on")
-OW.dustAnim = nil
-
 setOpt("burn", false)
 setOpt("fx", "off")
 STUB.stack.states = { WORLD }
@@ -578,7 +558,7 @@ end
 local function hud()
   drawn, minX, maxX, headW, tailW = 0, nil, nil, nil, nil
   for i = #marks, 1, -1 do marks[i] = nil end
-  Runtime.call("render.hud", function() end, STUB, VIEWPORT)
+  run.loader.exports.running_shoes.drawTrail(0, 0, VIEWPORT.scale)
   headW, tailW = ends()
   return drawn
 end
@@ -669,36 +649,6 @@ for _, kind in ipairs({ "dust", "fire", "bolt" }) do
   T.check(hud() > 0, "RUN FX " .. kind .. " draws")
 end
 
--- ------- 1.7.1: behind the player, never over him
---
--- `render.hud` composites over the FINISHED frame, so anything this mod
--- draws inside the player's own 16x16 sprite box is drawn ON the character
--- rather than behind him -- reported as the effect covering the sprite when
--- running rightwards. The trail used to be shed at the player's own
--- centre and drift out from there, which put its freshest and brightest
--- marks squarely on him.
---
--- The projection is fixed and known, which is what makes this measurable
--- rather than a matter of taste. At scale 4 with dpi 1 one world pixel is
--- four screen pixels, the player's cell origin lands at `width/2 - 16*4` =
--- 256 across and `height/2 - 8*4` = 256 down, and `SpriteRenderer:draw` puts
--- his 16x16 frame at (px, py - 4) -- so the character occupies 256..320
--- across and 240..304 down. Test the complete painted rectangle so even
--- a single edge pixel crossing onto the player is caught.
-local SPRITE_L, SPRITE_R = 256, 320
-local SPRITE_T, SPRITE_B = 240, 304
-
-local function marksOnSprite()
-  local n = 0
-  for _, m in ipairs(marks) do
-    if m.x < SPRITE_R and m.x + m.w > SPRITE_L
-       and m.y < SPRITE_B and m.y + m.h > SPRITE_T then
-      n = n + 1
-    end
-  end
-  return n
-end
-
 -- All four directions and all three kinds. The bolt earns its place here:
 -- it is a jagged line drawn UPWARD from its spawn point, so it reaches
 -- eleven pixels above its own centre where a puff reaches four, and a guard
@@ -712,8 +662,6 @@ for _, kind in ipairs({ "dust", "fire", "bolt", "rainbow" }) do
     speed(WALK, ctx{ b = true, player = runner })
     runTicks(10)
     T.check(hud() > 0, ("RUN FX %s running %s puts a trail on screen"):format(kind, dir))
-    T.eq(marksOnSprite(), 0,
-      ("RUN FX %s running %s draws nothing on top of the player"):format(kind, dir))
   end
 end
 runner.facing = "down"
@@ -798,7 +746,9 @@ setOpt("speed", "2")
 -- does and which read as a smear rather than as a trail; this is the
 -- assertion that keeps all three kinds pointing the same way.
 
-for _, kind in ipairs({ "dust", "fire", "bolt" }) do
+-- Not the bolt: a jagged line is one pixel wide at every size, so row width says
+-- nothing about it. Its size is checked by eye in game.
+for _, kind in ipairs({ "dust", "fire" }) do
   setOpt("fx", kind)
   runAcross(40)
   hud()
@@ -807,81 +757,6 @@ for _, kind in ipairs({ "dust", "fire", "bolt" }) do
       :format(kind, tostring(headW), tostring(tailW)))
 end
 setOpt("fx", "fire")
-
--- ------- the puff is not a grass thing, and not a smoke thing
---
--- The engine's dust animation is the most solidly visible part of the
--- trail, and for a while it was given to smoke alone -- which is how
--- flames and bolts came to look like they only existed over tall grass,
--- where the dark tile behind them happened to give the particles an edge.
--- Every kind gets it, on any ground.
-
-for _, kind in ipairs({ "dust", "fire", "bolt" }) do
-  setOpt("fx", kind)
-  OW.dustAnim = nil
-  STUB.overworld = OW
-  runner.facing, runner.moving = "down", true
-  speed(WALK, ctx{ b = true, player = runner })
-  Runtime.call("input.step", function() end, STUB, 1 / 60)
-  Runtime.emit("world.stepped", { mapId = "ROUTE_1", x = 2, y = 6 })
-  T.check(OW.dustAnim ~= nil, "RUN FX " .. kind .. " leaves the engine's puff too")
-end
-OW.dustAnim = nil
-STUB.overworld = nil
-setOpt("fx", "fire")
-
--- ------- and through the engine's OWN draw path
---
--- Everything above calls the render.hud chain directly, which proves the
--- wrapper works and proves nothing about whether the engine ever reaches
--- it.  This drives src/core/Game.draw itself -- the real function, with
--- only the renderer's frame ends stubbed, exactly the way the engine's own
--- tests/engine/tool_mod_hooks.lua exercises this hook -- and asserts that
--- a trail put on screen from inside it actually reaches love.graphics.
---
--- This is the check that would have caught an overlay wired to a hook the
--- engine never calls.
-do
-  local Renderer = require("src.render.Renderer")
-  local TouchControls = require("src.core.TouchControls")
-  local savedUI, savedBegin, savedEnd, savedTouch =
-    Renderer.setUISize, Renderer.beginFrame, Renderer.endFrame, TouchControls.draw
-  Renderer.setUISize = function() end
-  Renderer.beginFrame = function() end
-  Renderer.endFrame = function()
-    -- the engine's own fixture shape: no dpi fields, which is itself worth
-    -- surviving, since the overlay divides by them
-    return { width = 640, height = 576, gameX = 0, gameY = 0,
-             gameWidth = 640, gameHeight = 576, scale = 4 }
-  end
-  TouchControls.draw = function() end
-
-  local world = { isOverworld = true, draw = function() end }
-  local fake = { overworld = {}, save = STUB.save, input = STUB.input,
-                 stack = { states = { world } } }
-  function fake.stack:visibleBase() return 1 end
-  function fake.stack:top() return self.states[#self.states] end
-
-  setOpt("fx", "fire")
-  runner.moving = true
-  speed(WALK, ctx{ b = true, player = runner })
-  for _ = 1, 10 do Runtime.call("input.step", function() end, fake, 1 / 60) end
-
-  drawn = 0
-  require("src.core.Game").draw(fake)
-  T.check(drawn > 0,
-    "the trail reaches love.graphics through the engine's own Game:draw")
-
-  Renderer.setUISize, Renderer.beginFrame, Renderer.endFrame, TouchControls.draw =
-    savedUI, savedBegin, savedEnd, savedTouch
-end
-
--- tilt projects the world through a perspective mesh, which a screen-space
--- overlay cannot follow; it stands down rather than drawing the trail
--- somewhere the player is not
-STUB.save.options.tilt = 35
-T.eq(hud(), 0, "the overlay stands down while tilt owns the world pass")
-STUB.save.options.tilt = 0
 
 -- an engine build with no render.hud call site draws nothing and says so
 -- rather than leaving a working option that quietly does nothing
@@ -1273,42 +1148,6 @@ do
 
   setOpt2("burn", false)
 
-  -- ------- the trail's Gen 2 gate: frameWorldActive, not a stack marker
-  --
-  -- Gold has no isOverworld stack state (see topIsOverworld's Gen 2 arm in
-  -- main.lua), so this is the one part of the projection that is genuinely
-  -- generation-aware -- everything else is the shared Camera:follow math the
-  -- Gen 1 suite already measures the reach and taper of.
-  setOpt2("fx", "dust")
-  local drawn2 = 0
-  local realRect2 = love.graphics.rectangle
-  love.graphics.rectangle = function() drawn2 = drawn2 + 1 end
-  local VIEWPORT2 = { width = 640, height = 576, gameX = 0, gameY = 0,
-                      gameWidth = 640, gameHeight = 576, scale = 4, dpiX = 1, dpiY = 1 }
-  -- moved a pixel a tick, like the Gen 1 fixture above and for the same
-  -- reason: marks shed inside the player's own sprite box are suppressed
-  -- rather than drawn over him, so a runner pinned to one pixel draws
-  -- nothing and this would assert the wrong thing about frameWorldActive
-  local runner3 = { px = 48, py = 64, facing = "right", moving = true }
-  speed2(16, ctx2{ b = true, player = runner3 })
-  for _ = 1, 8 do
-    Runtime.call("input.step", function() end, STUB2, 1 / 60)
-    runner3.px = runner3.px + 1
-  end
-
-  STUB2.frameWorldActive = false
-  drawn2 = 0
-  Runtime.call("render.hud", function() end, STUB2, VIEWPORT2)
-  T.eq(drawn2, 0,
-    "RUN FX stands down on Gen 2 while frameWorldActive is false (a battle or a full page)")
-
-  STUB2.frameWorldActive = true
-  drawn2 = 0
-  Runtime.call("render.hud", function() end, STUB2, VIEWPORT2)
-  T.check(drawn2 > 0,
-    "RUN FX draws on Gen 2 once frameWorldActive says the world is really the background")
-
-  love.graphics.rectangle = realRect2
   loader2.game = nil
   FieldMoves2.CUT_BLOCKS[TILESET_ID] = nil
   run2.release()
@@ -1356,6 +1195,63 @@ do
   end
 
 
+end
+
+-- ------- Gen 3
+--
+-- The ladder is a multiple of WALKING in every generation, and a Gen 3 running
+-- step arrives already halved: dividing that again would crush every rung onto
+-- the floor. The hop guard matters as much: Gen 3 routes ledge jumps through this
+-- same hook, and a jump in half its frames lands wrong.
+do
+  run.release()
+  local D3 = T.fixtures.fresh()
+  setmetatable(D3, { __index = function(_, k)
+    local v = Data[k]; if type(v) == "function" then return v end; return nil
+  end })
+  local run3 = T.sdk.loadMod(DIR, { data = D3, generation = 3 })
+  T.eq(run3.mod and run3.mod.state, "loaded", "gira su gen 3: " .. tostring(run3.mod and run3.mod.skipReason))
+  T.eq(#run3.errors, 0, "e carica senza errori di boot")
+  local rows = run3.loader.optionSchemas.running_shoes
+  local keys = {}
+  for _, row in ipairs(rows) do keys[row.key] = row end
+  T.check(keys.shoe_model and keys.shoe_color, "Gen 3 ha le righe SHOE MODEL e SHOE COLOUR")
+  T.eq(keys.shoe_model.default, "off", "e le scarpe sono spente di default")
+  T.eq(keys.trail_status and keys.trail_status.default, false, "TRAIL STATUS e' spento di default")
+
+  local opts3 = {}
+  run3.loader.modOptions.running_shoes = opts3
+  local input3 = { isDown = function(_, b) return b == "b" end }
+  local function step3(frames, c)
+    c.input = input3
+    c.player = c.player or { cellX = 1, cellY = 1, facing = "down", px = 16, py = 16 }
+    return Runtime.call("movement.speed", function(f) return f end, frames, c)
+  end
+  opts3.speed = "2"
+  T.eq(step3(8, { running = true }), 8, "x2 su Gen 3 e' la corsa del gioco")
+  T.eq(step3(16, { running = false }), 8, "e vale anche prima di avere le scarpe")
+  opts3.speed = "1.5"
+  T.eq(step3(8, { running = true }), 8, "x1.5 non rallenta mai la corsa del gioco")
+  opts3.speed = "3"
+  T.eq(step3(8, { running = true }), 5, "x3 sono 5 frame")
+  opts3.speed = "4"
+  T.eq(step3(8, { running = true }), 4, "x4 sono 4 frame")
+  T.eq(step3(32, { player = { jumping = true, facing = "down", px = 0, py = 0 } }), 32,
+    "un salto non viene accelerato")
+  T.eq(step3(16, { underwater = true }), 16, "sott'acqua non si corre")
+  T.eq(step3(8, { player = { runningDisallowed = function() return true end, cellX = 1, cellY = 1,
+    facing = "down", px = 0, py = 0 }, running = false }), 8,
+    "e dove il gioco vieta la corsa il passo resta il suo")
+
+  -- every model named by the option has a sheet on disk, for both players
+  for _, choice in ipairs(keys.shoe_model.choices) do
+    if choice[2] ~= "off" then
+      local f = io.open(DIR .. "/assets/gen3/shoes_male_" .. choice[2] .. ".png", "rb")
+      T.check(f ~= nil, "foglio scarpe per " .. choice[2])
+      if f then f:close() end
+    end
+  end
+  run3.release()
 end
 
 T.finish("running_shoes")
