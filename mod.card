@@ -2,7 +2,6 @@
 return {
   summary = "Hold B to walk faster, on every generation -- with a dust, flame, lightning or rainbow tail that can hit the wild Pokemon you meet, and shoes on your feet on Emerald.",
   author = "MadeinTaly",
-  support = "https://linktr.ee/made_in_taly",
   tags = { "quality-of-life", "movement", "beginner", "data-only" },
   compat = { modApi = 2, games = { "gen1", "gen2", "gen3" } },
   differences = {
